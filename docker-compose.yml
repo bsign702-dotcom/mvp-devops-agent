@@ -22,13 +22,22 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    env_file:
+      - .env
     environment:
-      DATABASE_URL: postgresql+psycopg://devops:devops@postgres:5432/devops
-      AGENT_TOKEN_PEPPER: super_secret_pepper_change_me
-      OFFLINE_AFTER_SECONDS: "120"
-      ALERT_DEDUPE_SECONDS: "600"
-      APP_PUBLIC_INSTALL_SH_URL: http://localhost:8000/install.sh
-      API_BASE_URL: http://localhost:8000
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://devops:devops@postgres:5432/devops}
+      AGENT_TOKEN_PEPPER: ${AGENT_TOKEN_PEPPER:-super_secret_pepper_change_me}
+      OFFLINE_AFTER_SECONDS: ${OFFLINE_AFTER_SECONDS:-120}
+      ALERT_DEDUPE_SECONDS: ${ALERT_DEDUPE_SECONDS:-600}
+      APP_PUBLIC_INSTALL_SH_URL: ${APP_PUBLIC_INSTALL_SH_URL:-http://localhost:8000/install.sh}
+      API_BASE_URL: ${API_BASE_URL:-http://localhost:8000}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_TLS: ${SMTP_TLS:-true}
+      SEND_RECOVERY_EMAILS: ${SEND_RECOVERY_EMAILS:-false}
     ports:
       - "8000:8000"
     restart: unless-stopped
