@@ -126,6 +126,26 @@
             "description": "Server details including metadata, latest metrics, and last 20 alerts. Requires `serverId` variable."
           },
           "response": []
+        },
+        {
+          "name": "Delete Server",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/servers/{{serverId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "servers",
+                "{{serverId}}"
+              ]
+            },
+            "description": "Deletes a server and cascades related metrics/logs/alerts. Requires `serverId` variable."
+          },
+          "response": []
         }
       ]
     },

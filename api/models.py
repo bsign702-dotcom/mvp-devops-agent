@@ -69,6 +69,12 @@ class ServerDetailResponse(BaseModel):
     alerts: list[AlertItem]
 
 
+class ServerDeleteResponse(BaseModel):
+    ok: bool = True
+    server_id: UUID
+    deleted: bool = True
+
+
 class HostInfo(BaseModel):
     hostname: str | None = None
     os: str | None = None

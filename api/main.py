@@ -31,6 +31,7 @@ from .models import (
     MetricSummary,
     ServerCreateRequest,
     ServerCreateResponse,
+    ServerDeleteResponse,
     ServerDetailResponse,
     ServerListItem,
 )
@@ -263,6 +264,24 @@ def get_server(server_id: UUID) -> ServerDetailResponse:
             for row in alert_rows
         ],
     )
+
+
+@app.delete("/v1/servers/{server_id}", response_model=ServerDeleteResponse)
+def delete_server(server_id: UUID) -> ServerDeleteResponse:
+    with get_engine().begin() as conn:
+        deleted = conn.execute(
+            text(
+                """
+                DELETE FROM servers
+                WHERE id = :server_id
+                """
+            ),
+            {"server_id": str(server_id)},
+        )
+        if not deleted.rowcount:
+            raise APIError(code="not_found", message="Server not found", status_code=404)
+
+    return ServerDeleteResponse(server_id=server_id)
 
 
 def _extract_bearer_token(request: Request) -> str:

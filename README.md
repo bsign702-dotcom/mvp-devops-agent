@@ -107,6 +107,7 @@ Behavior:
 - `POST /v1/servers`
 - `GET /v1/servers`
 - `GET /v1/servers/{server_id}`
+- `DELETE /v1/servers/{server_id}`
 - `POST /v1/ingest` (requires `Authorization: Bearer <agent_token>`)
 - `GET /v1/alerts?server_id=<uuid>&resolved=<true|false>`
 
