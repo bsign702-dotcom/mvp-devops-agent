@@ -19,8 +19,10 @@ def infer_log_level(message: str) -> str:
     return "info"
 
 
-def _metric_alert_thresholds(conn: Connection) -> dict[str, int]:
+def _metric_alert_thresholds(conn: Connection, *, owner_user_id: UUID | None) -> dict[str, int]:
     defaults = {"cpu": 90, "ram": 90, "disk": 90}
+    if owner_user_id is None:
+        return defaults
     try:
         row = conn.execute(
             text(
@@ -31,8 +33,10 @@ def _metric_alert_thresholds(conn: Connection) -> dict[str, int]:
                     MIN(disk_threshold) AS min_disk_threshold
                 FROM notification_settings
                 WHERE is_enabled = TRUE
+                  AND user_id = :user_id
                 """
-            )
+            ),
+            {"user_id": str(owner_user_id)},
         ).mappings().first()
     except Exception:
         return defaults
@@ -85,7 +89,7 @@ def resolve_alert_type(
             WHERE {target_clause}
               AND type = :alert_type
               AND is_resolved = FALSE
-            RETURNING id, server_id, uptime_monitor_id, ts, type, severity, title, details, is_resolved, resolved_at
+            RETURNING id, user_id, server_id, uptime_monitor_id, ts, type, severity, title, details, is_resolved, resolved_at
             """
             .replace("{target_clause}", target_clause)
         ),
@@ -157,9 +161,25 @@ def create_alert_if_needed(
     row = conn.execute(
         text(
             """
-            INSERT INTO alerts (server_id, uptime_monitor_id, type, severity, title, details)
-            VALUES (:server_id, :uptime_monitor_id, :alert_type, :severity, :title, CAST(:details AS jsonb))
-            RETURNING id, server_id, uptime_monitor_id, ts, type, severity, title, details, is_resolved, resolved_at
+            INSERT INTO alerts (user_id, server_id, uptime_monitor_id, type, severity, title, details)
+            VALUES (
+                CASE
+                    WHEN :server_id IS NOT NULL THEN (
+                        SELECT s.user_id FROM servers s WHERE s.id = CAST(:server_id AS uuid)
+                    )
+                    WHEN :uptime_monitor_id IS NOT NULL THEN (
+                        SELECT um.user_id FROM uptime_monitors um WHERE um.id = CAST(:uptime_monitor_id AS uuid)
+                    )
+                    ELSE NULL
+                END,
+                :server_id,
+                :uptime_monitor_id,
+                :alert_type,
+                :severity,
+                :title,
+                CAST(:details AS jsonb)
+            )
+            RETURNING id, user_id, server_id, uptime_monitor_id, ts, type, severity, title, details, is_resolved, resolved_at
             """
         ),
         {
@@ -183,13 +203,14 @@ def evaluate_metric_alerts(
     conn: Connection,
     *,
     server_id: UUID,
+    owner_user_id: UUID | None,
     cpu_percent: float | None,
     ram_percent: float | None,
     disk_percent: float | None,
     dedupe_seconds: int,
 ) -> list[str]:
     created: list[str] = []
-    thresholds = _metric_alert_thresholds(conn)
+    thresholds = _metric_alert_thresholds(conn, owner_user_id=owner_user_id)
     if cpu_percent is not None and cpu_percent >= thresholds["cpu"]:
         if create_alert_if_needed(
             conn,

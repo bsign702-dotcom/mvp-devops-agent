@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
@@ -15,7 +16,13 @@ def _fmt_dt(value: Any) -> str:
     return str(value)
 
 
-def build_daily_report(conn: Connection, *, email: str, now: datetime | None = None) -> tuple[str, str, str]:
+def build_daily_report(
+    conn: Connection,
+    *,
+    user_id: UUID,
+    email: str,
+    now: datetime | None = None,
+) -> tuple[str, str, str]:
     now = now or datetime.now(timezone.utc)
     since = now - timedelta(hours=24)
     subject = f"AI DevOps Monitor Daily Report ({now.date().isoformat()})"
@@ -25,9 +32,11 @@ def build_daily_report(conn: Connection, *, email: str, now: datetime | None = N
             """
             SELECT id, name, status, last_seen_at
             FROM servers
+            WHERE user_id = :user_id
             ORDER BY name ASC
             """
-        )
+        ),
+        {"user_id": str(user_id)},
     ).mappings().all()
 
     alert_counts = conn.execute(
@@ -36,11 +45,12 @@ def build_daily_report(conn: Connection, *, email: str, now: datetime | None = N
             SELECT severity, type, COUNT(*) AS count
             FROM alerts
             WHERE ts >= :since
+              AND user_id = :user_id
             GROUP BY severity, type
             ORDER BY count DESC, severity DESC, type ASC
             """
         ),
-        {"since": since},
+        {"since": since, "user_id": str(user_id)},
     ).mappings().all()
 
     latest_alerts = conn.execute(
@@ -49,11 +59,12 @@ def build_daily_report(conn: Connection, *, email: str, now: datetime | None = N
             SELECT id, server_id, uptime_monitor_id, ts, type, severity, title, is_resolved, resolved_at
             FROM alerts
             WHERE ts >= :since
+              AND user_id = :user_id
             ORDER BY ts DESC
             LIMIT 10
             """
         ),
-        {"since": since},
+        {"since": since, "user_id": str(user_id)},
     ).mappings().all()
 
     worst_metrics = conn.execute(
@@ -65,11 +76,12 @@ def build_daily_report(conn: Connection, *, email: str, now: datetime | None = N
                    MAX(m.disk_percent) AS max_disk_percent
             FROM servers s
             LEFT JOIN metrics m ON m.server_id = s.id AND m.ts >= :since
+            WHERE s.user_id = :user_id
             GROUP BY s.id, s.name
             ORDER BY s.name ASC
             """
         ),
-        {"since": since},
+        {"since": since, "user_id": str(user_id)},
     ).mappings().all()
 
     uptime_summary = conn.execute(
@@ -81,11 +93,12 @@ def build_daily_report(conn: Connection, *, email: str, now: datetime | None = N
             FROM uptime_monitors um
             LEFT JOIN uptime_checks uc
               ON uc.monitor_id = um.id AND uc.checked_at >= :since
+            WHERE um.user_id = :user_id
             GROUP BY um.id, um.name, um.url, um.last_status, um.last_checked_at
             ORDER BY um.name ASC
             """
         ),
-        {"since": since},
+        {"since": since, "user_id": str(user_id)},
     ).mappings().all()
 
     text_lines: list[str] = []

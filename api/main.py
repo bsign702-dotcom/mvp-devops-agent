@@ -188,7 +188,7 @@ def auth_me(current_user: AuthenticatedUser = Depends(require_authenticated_user
 @app.post("/v1/servers", response_model=ServerCreateResponse)
 def create_server(
     payload: ServerCreateRequest,
-    _: AuthenticatedUser = Depends(require_authenticated_user),
+    current_user: AuthenticatedUser = Depends(require_authenticated_user),
 ) -> ServerCreateResponse:
     raw_token = generate_agent_token()
     token_hash = hash_agent_token(raw_token, settings.agent_token_pepper)
@@ -197,12 +197,16 @@ def create_server(
         row = conn.execute(
             text(
                 """
-                INSERT INTO servers (name, agent_token_hash, status)
-                VALUES (:name, :agent_token_hash, 'pending')
+                INSERT INTO servers (user_id, name, agent_token_hash, status)
+                VALUES (:user_id, :name, :agent_token_hash, 'pending')
                 RETURNING id, name
                 """
             ),
-            {"name": payload.name, "agent_token_hash": token_hash},
+            {
+                "user_id": str(current_user.local_user_id),
+                "name": payload.name,
+                "agent_token_hash": token_hash,
+            },
         ).mappings().one()
 
     install_command = (
@@ -218,7 +222,7 @@ def create_server(
 
 
 @app.get("/v1/servers", response_model=list[ServerListItem])
-def list_servers(_: AuthenticatedUser = Depends(require_authenticated_user)) -> list[ServerListItem]:
+def list_servers(current_user: AuthenticatedUser = Depends(require_authenticated_user)) -> list[ServerListItem]:
     rows = []
     with get_engine().connect() as conn:
         rows = conn.execute(
@@ -226,9 +230,11 @@ def list_servers(_: AuthenticatedUser = Depends(require_authenticated_user)) -> 
                 """
                 SELECT id AS server_id, name, status, last_seen_at, created_at
                 FROM servers
+                WHERE user_id = :user_id
                 ORDER BY created_at DESC
                 """
-            )
+            ),
+            {"user_id": str(current_user.local_user_id)},
         ).mappings().all()
     return [ServerListItem(**dict(row)) for row in rows]
 
@@ -236,7 +242,7 @@ def list_servers(_: AuthenticatedUser = Depends(require_authenticated_user)) -> 
 @app.get("/v1/servers/{server_id}", response_model=ServerDetailResponse)
 def get_server(
     server_id: UUID,
-    _: AuthenticatedUser = Depends(require_authenticated_user),
+    current_user: AuthenticatedUser = Depends(require_authenticated_user),
 ) -> ServerDetailResponse:
     with get_engine().connect() as conn:
         server = conn.execute(
@@ -245,9 +251,10 @@ def get_server(
                 SELECT id AS server_id, name, status, created_at, last_seen_at, metadata
                 FROM servers
                 WHERE id = :server_id
+                  AND user_id = :user_id
                 """
             ),
-            {"server_id": str(server_id)},
+            {"server_id": str(server_id), "user_id": str(current_user.local_user_id)},
         ).mappings().first()
         if not server:
             raise APIError(code="not_found", message="Server not found", status_code=404)
@@ -298,7 +305,7 @@ def get_server(
 @app.delete("/v1/servers/{server_id}", response_model=ServerDeleteResponse)
 def delete_server(
     server_id: UUID,
-    _: AuthenticatedUser = Depends(require_authenticated_user),
+    current_user: AuthenticatedUser = Depends(require_authenticated_user),
 ) -> ServerDeleteResponse:
     with get_engine().begin() as conn:
         deleted = conn.execute(
@@ -306,9 +313,10 @@ def delete_server(
                 """
                 DELETE FROM servers
                 WHERE id = :server_id
+                  AND user_id = :user_id
                 """
             ),
-            {"server_id": str(server_id)},
+            {"server_id": str(server_id), "user_id": str(current_user.local_user_id)},
         )
         if not deleted.rowcount:
             raise APIError(code="not_found", message="Server not found", status_code=404)
@@ -348,16 +356,16 @@ def _row_to_uptime_monitor_item(row: Any) -> UptimeMonitorItem:
 @app.post("/v1/uptime-monitors", response_model=UptimeMonitorItem)
 def create_uptime_monitor(
     payload: UptimeMonitorCreateRequest,
-    _: AuthenticatedUser = Depends(require_authenticated_user),
+    current_user: AuthenticatedUser = Depends(require_authenticated_user),
 ) -> UptimeMonitorItem:
     with get_engine().begin() as conn:
         row = conn.execute(
             text(
                 """
                 INSERT INTO uptime_monitors (
-                    name, url, check_interval_sec, timeout_sec, expected_status
+                    user_id, name, url, check_interval_sec, timeout_sec, expected_status
                 ) VALUES (
-                    :name, :url, :check_interval_sec, :timeout_sec, :expected_status
+                    :user_id, :name, :url, :check_interval_sec, :timeout_sec, :expected_status
                 )
                 RETURNING id, name, url, check_interval_sec, timeout_sec, expected_status,
                           last_status, last_response_time_ms, last_checked_at,
@@ -365,6 +373,7 @@ def create_uptime_monitor(
                 """
             ),
             {
+                "user_id": str(current_user.local_user_id),
                 "name": payload.name.strip(),
                 "url": str(payload.url),
                 "check_interval_sec": payload.check_interval_sec,
@@ -376,7 +385,7 @@ def create_uptime_monitor(
 
 
 @app.get("/v1/uptime-monitors", response_model=list[UptimeMonitorItem])
-def list_uptime_monitors(_: AuthenticatedUser = Depends(require_authenticated_user)) -> list[UptimeMonitorItem]:
+def list_uptime_monitors(current_user: AuthenticatedUser = Depends(require_authenticated_user)) -> list[UptimeMonitorItem]:
     with get_engine().connect() as conn:
         rows = conn.execute(
             text(
@@ -385,9 +394,11 @@ def list_uptime_monitors(_: AuthenticatedUser = Depends(require_authenticated_us
                        last_status, last_response_time_ms, last_checked_at,
                        consecutive_failures, created_at
                 FROM uptime_monitors
+                WHERE user_id = :user_id
                 ORDER BY created_at DESC
                 """
-            )
+            ),
+            {"user_id": str(current_user.local_user_id)},
         ).mappings().all()
     return [_row_to_uptime_monitor_item(row) for row in rows]
 
@@ -395,7 +406,7 @@ def list_uptime_monitors(_: AuthenticatedUser = Depends(require_authenticated_us
 @app.get("/v1/uptime-monitors/{monitor_id}", response_model=UptimeMonitorItem)
 def get_uptime_monitor(
     monitor_id: UUID,
-    _: AuthenticatedUser = Depends(require_authenticated_user),
+    current_user: AuthenticatedUser = Depends(require_authenticated_user),
 ) -> UptimeMonitorItem:
     with get_engine().connect() as conn:
         row = conn.execute(
@@ -406,9 +417,10 @@ def get_uptime_monitor(
                        consecutive_failures, created_at
                 FROM uptime_monitors
                 WHERE id = :monitor_id
+                  AND user_id = :user_id
                 """
             ),
-            {"monitor_id": str(monitor_id)},
+            {"monitor_id": str(monitor_id), "user_id": str(current_user.local_user_id)},
         ).mappings().first()
     if not row:
         raise APIError(code="not_found", message="Uptime monitor not found", status_code=404)
@@ -418,12 +430,12 @@ def get_uptime_monitor(
 @app.delete("/v1/uptime-monitors/{monitor_id}", response_model=UptimeMonitorDeleteResponse)
 def delete_uptime_monitor(
     monitor_id: UUID,
-    _: AuthenticatedUser = Depends(require_authenticated_user),
+    current_user: AuthenticatedUser = Depends(require_authenticated_user),
 ) -> UptimeMonitorDeleteResponse:
     with get_engine().begin() as conn:
         result = conn.execute(
-            text("DELETE FROM uptime_monitors WHERE id = :monitor_id"),
-            {"monitor_id": str(monitor_id)},
+            text("DELETE FROM uptime_monitors WHERE id = :monitor_id AND user_id = :user_id"),
+            {"monitor_id": str(monitor_id), "user_id": str(current_user.local_user_id)},
         )
         if not result.rowcount:
             raise APIError(code="not_found", message="Uptime monitor not found", status_code=404)
@@ -434,12 +446,12 @@ def delete_uptime_monitor(
 def list_uptime_checks(
     monitor_id: UUID,
     limit: int = Query(default=100, ge=1, le=500),
-    _: AuthenticatedUser = Depends(require_authenticated_user),
+    current_user: AuthenticatedUser = Depends(require_authenticated_user),
 ) -> list[UptimeCheckItem]:
     with get_engine().connect() as conn:
         monitor_exists = conn.execute(
-            text("SELECT 1 FROM uptime_monitors WHERE id = :monitor_id"),
-            {"monitor_id": str(monitor_id)},
+            text("SELECT 1 FROM uptime_monitors WHERE id = :monitor_id AND user_id = :user_id"),
+            {"monitor_id": str(monitor_id), "user_id": str(current_user.local_user_id)},
         ).first()
         if not monitor_exists:
             raise APIError(code="not_found", message="Uptime monitor not found", status_code=404)
@@ -462,19 +474,19 @@ def list_uptime_checks(
 @app.post("/v1/notifications/settings", response_model=NotificationSettingItem)
 def upsert_notifications_settings(
     payload: NotificationSettingUpsertRequest,
-    _: AuthenticatedUser = Depends(require_authenticated_user),
+    current_user: AuthenticatedUser = Depends(require_authenticated_user),
 ) -> NotificationSettingItem:
     with get_engine().begin() as conn:
-        row = svc_upsert_notification_setting(conn, payload.model_dump())
+        row = svc_upsert_notification_setting(conn, current_user.local_user_id, payload.model_dump())
     return NotificationSettingItem(**row)
 
 
 @app.get("/v1/notifications/settings", response_model=list[NotificationSettingItem])
 def get_notifications_settings(
-    _: AuthenticatedUser = Depends(require_authenticated_user),
+    current_user: AuthenticatedUser = Depends(require_authenticated_user),
 ) -> list[NotificationSettingItem]:
     with get_engine().connect() as conn:
-        rows = svc_list_notification_settings(conn)
+        rows = svc_list_notification_settings(conn, current_user.local_user_id)
     return [NotificationSettingItem(**row) for row in rows]
 
 
@@ -497,7 +509,7 @@ def ingest(payload: IngestRequest, request: Request) -> IngestResponse:
         server = conn.execute(
             text(
                 """
-                SELECT id, name
+                SELECT id, name, user_id
                 FROM servers
                 WHERE agent_token_hash = :agent_token_hash
                 LIMIT 1
@@ -588,6 +600,7 @@ def ingest(payload: IngestRequest, request: Request) -> IngestResponse:
         alerts_created = evaluate_metric_alerts(
             conn,
             server_id=server["id"],
+            owner_user_id=server.get("user_id"),
             cpu_percent=payload.metrics.cpu_percent,
             ram_percent=payload.metrics.ram_percent,
             disk_percent=payload.metrics.disk_percent,
@@ -613,10 +626,11 @@ def list_alerts(
     server_id: UUID | None = Query(default=None),
     uptime_monitor_id: UUID | None = Query(default=None),
     resolved: bool | None = Query(default=None),
-    _: AuthenticatedUser = Depends(require_authenticated_user),
+    current_user: AuthenticatedUser = Depends(require_authenticated_user),
 ) -> list[AlertItem]:
     conditions: list[str] = []
-    params: dict[str, Any] = {}
+    params: dict[str, Any] = {"user_id": str(current_user.local_user_id)}
+    conditions.append("user_id = :user_id")
     if server_id is not None:
         conditions.append("server_id = :server_id")
         params["server_id"] = str(server_id)

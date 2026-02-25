@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from datetime import datetime, timezone
 from typing import Any
+from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
@@ -110,21 +112,51 @@ def _should_send_for_recipient(alert: dict[str, Any], recipient: dict[str, Any],
     return True
 
 
-def _fetch_enabled_recipients(conn: Connection) -> list[dict[str, Any]]:
+def _fetch_enabled_recipients(conn: Connection, *, user_id: UUID) -> list[dict[str, Any]]:
     return [
         dict(row)
         for row in conn.execute(
             text(
                 """
-                SELECT id, email, is_enabled, cpu_threshold, disk_threshold, ram_threshold,
+                SELECT id, user_id, email, is_enabled, cpu_threshold, disk_threshold, ram_threshold,
                        offline_threshold_sec, daily_report_time_utc, created_at
                 FROM notification_settings
                 WHERE is_enabled = TRUE
+                  AND user_id = :user_id
                 ORDER BY created_at ASC
                 """
-            )
+            ),
+            {"user_id": str(user_id)},
         ).mappings().all()
     ]
+
+
+def _alert_owner_user_id(conn: Connection, alert: dict[str, Any]) -> UUID | None:
+    raw_user_id = alert.get("user_id")
+    if raw_user_id:
+        try:
+            return UUID(str(raw_user_id))
+        except Exception:
+            pass
+
+    server_id = alert.get("server_id")
+    if server_id:
+        value = conn.execute(
+            text("SELECT user_id FROM servers WHERE id = :server_id"),
+            {"server_id": str(server_id)},
+        ).scalar()
+        if value:
+            return UUID(str(value))
+
+    uptime_monitor_id = alert.get("uptime_monitor_id")
+    if uptime_monitor_id:
+        value = conn.execute(
+            text("SELECT user_id FROM uptime_monitors WHERE id = :monitor_id"),
+            {"monitor_id": str(uptime_monitor_id)},
+        ).scalar()
+        if value:
+            return UUID(str(value))
+    return None
 
 
 def _send_alert_notification(conn: Connection, *, recipient: dict[str, Any], alert: dict[str, Any], is_recovery: bool) -> None:
@@ -211,8 +243,12 @@ def notify_for_alert_change(conn: Connection, alert: dict[str, Any], *, is_recov
     if is_recovery and not settings.send_recovery_emails:
         return
 
+    owner_user_id = _alert_owner_user_id(conn, alert)
+    if owner_user_id is None:
+        return
+
     try:
-        recipients = _fetch_enabled_recipients(conn)
+        recipients = _fetch_enabled_recipients(conn, user_id=owner_user_id)
     except Exception:
         logger.exception("notification_fetch_recipients_failed", extra={"event": "notification_fetch_recipients_failed"})
         return
@@ -226,7 +262,7 @@ def notify_for_alert_change(conn: Connection, alert: dict[str, Any], *, is_recov
         _send_alert_notification(conn, recipient=recipient, alert=alert, is_recovery=is_recovery)
 
 
-def upsert_notification_setting(conn: Connection, payload: dict[str, Any]) -> dict[str, Any]:
+def upsert_notification_setting(conn: Connection, user_id: UUID, payload: dict[str, Any]) -> dict[str, Any]:
     email = str(payload.get("email", "")).strip().lower()
     if not _is_valid_email(email):
         raise APIError(code="bad_request", message="Invalid email", status_code=400)
@@ -235,13 +271,13 @@ def upsert_notification_setting(conn: Connection, payload: dict[str, Any]) -> di
         text(
             """
             INSERT INTO notification_settings (
-                email, is_enabled, cpu_threshold, disk_threshold, ram_threshold,
+                user_id, email, is_enabled, cpu_threshold, disk_threshold, ram_threshold,
                 offline_threshold_sec, daily_report_time_utc
             ) VALUES (
-                :email, :is_enabled, :cpu_threshold, :disk_threshold, :ram_threshold,
+                :user_id, :email, :is_enabled, :cpu_threshold, :disk_threshold, :ram_threshold,
                 :offline_threshold_sec, :daily_report_time_utc
             )
-            ON CONFLICT (email) DO UPDATE
+            ON CONFLICT (user_id, email) DO UPDATE
             SET is_enabled = EXCLUDED.is_enabled,
                 cpu_threshold = EXCLUDED.cpu_threshold,
                 disk_threshold = EXCLUDED.disk_threshold,
@@ -254,6 +290,7 @@ def upsert_notification_setting(conn: Connection, payload: dict[str, Any]) -> di
         ),
         {
             "email": email,
+            "user_id": str(user_id),
             "is_enabled": bool(payload.get("is_enabled", True)),
             "cpu_threshold": int(payload.get("cpu_threshold", 80)),
             "disk_threshold": int(payload.get("disk_threshold", 85)),
@@ -265,16 +302,18 @@ def upsert_notification_setting(conn: Connection, payload: dict[str, Any]) -> di
     return dict(row)
 
 
-def list_notification_settings(conn: Connection) -> list[dict[str, Any]]:
+def list_notification_settings(conn: Connection, user_id: UUID) -> list[dict[str, Any]]:
     rows = conn.execute(
         text(
             """
             SELECT id, email, is_enabled, cpu_threshold, disk_threshold, ram_threshold,
                    offline_threshold_sec, daily_report_time_utc, created_at
             FROM notification_settings
+            WHERE user_id = :user_id
             ORDER BY created_at ASC
             """
-        )
+        ),
+        {"user_id": str(user_id)},
     ).mappings().all()
     return [dict(row) for row in rows]
 
@@ -305,9 +344,10 @@ def _due_recipients_for_daily_report(conn: Connection, now: datetime) -> list[di
     rows = conn.execute(
         text(
             """
-            SELECT id, email, is_enabled, daily_report_time_utc
+            SELECT id, user_id, email, is_enabled, daily_report_time_utc
             FROM notification_settings
             WHERE is_enabled = TRUE
+              AND user_id IS NOT NULL
               AND to_char(daily_report_time_utc, 'HH24:MI') = :hhmm
             ORDER BY created_at ASC
             """
@@ -317,19 +357,20 @@ def _due_recipients_for_daily_report(conn: Connection, now: datetime) -> list[di
     return [dict(r) for r in rows]
 
 
-def _daily_event_key(day: str, email: str) -> str:
-    return f"DAILY:{day}:{email.lower()}"
+def _daily_event_key(day: str, user_id: UUID, email: str) -> str:
+    return f"DAILY:{day}:USER:{user_id}:EMAIL:{email.lower()}"
 
 
 def _send_daily_report_for_recipient(conn: Connection, recipient: dict[str, Any], now: datetime) -> None:
     email = str(recipient["email"]).strip().lower()
-    key = _daily_event_key(now.date().isoformat(), email)
+    user_id = UUID(str(recipient["user_id"]))
+    key = _daily_event_key(now.date().isoformat(), user_id, email)
     already = conn.execute(text("SELECT 1 FROM notification_events WHERE key = :key LIMIT 1"), {"key": key}).first()
     if already:
         return
 
     try:
-        subject, text_body, html_body = build_daily_report(conn, email=email, now=now)
+        subject, text_body, html_body = build_daily_report(conn, user_id=user_id, email=email, now=now)
         send_email(MailPayload(to_email=email, subject=subject, text_body=text_body, html_body=html_body))
         _insert_notification_event(
             conn,
