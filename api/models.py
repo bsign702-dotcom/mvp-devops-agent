@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import AnyHttpUrl, BaseModel, Field, field_validator
 
 
 class ServerCreateRequest(BaseModel):
@@ -48,7 +48,8 @@ class MetricSummary(BaseModel):
 
 class AlertItem(BaseModel):
     id: int
-    server_id: UUID
+    server_id: UUID | None = None
+    uptime_monitor_id: UUID | None = None
     ts: datetime
     type: str
     severity: str
@@ -73,6 +74,52 @@ class ServerDeleteResponse(BaseModel):
     ok: bool = True
     server_id: UUID
     deleted: bool = True
+
+
+class UptimeMonitorCreateRequest(BaseModel):
+    name: str = Field(..., min_length=2, max_length=120)
+    url: AnyHttpUrl
+    check_interval_sec: int = Field(30, ge=10, le=3600)
+    timeout_sec: int = Field(10, ge=1, le=60)
+    expected_status: int = Field(200, ge=100, le=599)
+
+    @field_validator("name")
+    @classmethod
+    def _strip_monitor_name(cls, value: str) -> str:
+        stripped = value.strip()
+        if len(stripped) < 2:
+            raise ValueError("name must be at least 2 characters")
+        return stripped
+
+
+class UptimeMonitorItem(BaseModel):
+    id: UUID
+    name: str
+    url: str
+    check_interval_sec: int
+    timeout_sec: int
+    expected_status: int
+    last_status: str
+    last_response_time_ms: int | None = None
+    last_checked_at: datetime | None = None
+    consecutive_failures: int
+    created_at: datetime
+
+
+class UptimeMonitorDeleteResponse(BaseModel):
+    ok: bool = True
+    monitor_id: UUID
+    deleted: bool = True
+
+
+class UptimeCheckItem(BaseModel):
+    id: int
+    monitor_id: UUID
+    status: str
+    response_time_ms: int | None = None
+    status_code: int | None = None
+    error_message: str | None = None
+    checked_at: datetime
 
 
 class HostInfo(BaseModel):

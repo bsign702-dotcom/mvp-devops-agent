@@ -22,18 +22,45 @@ def is_service_restart_line(message: str) -> bool:
     return "started" in lowered or "restart" in lowered or "reloaded" in lowered
 
 
-def resolve_alert_type(conn: Connection, server_id: UUID, alert_type: str) -> int:
+def _target_where_clause(server_id: UUID | None, uptime_monitor_id: UUID | None) -> str:
+    if (server_id is None) == (uptime_monitor_id is None):
+        raise ValueError("Exactly one of server_id or uptime_monitor_id must be provided")
+    if server_id is not None:
+        return "server_id = :server_id AND uptime_monitor_id IS NULL"
+    return "uptime_monitor_id = :uptime_monitor_id AND server_id IS NULL"
+
+
+def _target_params(server_id: UUID | None, uptime_monitor_id: UUID | None) -> dict[str, str]:
+    params: dict[str, str] = {}
+    if server_id is not None:
+        params["server_id"] = str(server_id)
+    if uptime_monitor_id is not None:
+        params["uptime_monitor_id"] = str(uptime_monitor_id)
+    return params
+
+
+def resolve_alert_type(
+    conn: Connection,
+    server_id: UUID | None,
+    alert_type: str,
+    *,
+    uptime_monitor_id: UUID | None = None,
+) -> int:
+    target_clause = _target_where_clause(server_id, uptime_monitor_id)
+    params = _target_params(server_id, uptime_monitor_id)
+    params["alert_type"] = alert_type
     result = conn.execute(
         text(
             """
             UPDATE alerts
             SET is_resolved = TRUE, resolved_at = now()
-            WHERE server_id = :server_id
+            WHERE {target_clause}
               AND type = :alert_type
               AND is_resolved = FALSE
             """
+            .replace("{target_clause}", target_clause)
         ),
-        {"server_id": str(server_id), "alert_type": alert_type},
+        params,
     )
     return int(result.rowcount or 0)
 
@@ -41,7 +68,8 @@ def resolve_alert_type(conn: Connection, server_id: UUID, alert_type: str) -> in
 def create_alert_if_needed(
     conn: Connection,
     *,
-    server_id: UUID,
+    server_id: UUID | None = None,
+    uptime_monitor_id: UUID | None = None,
     alert_type: str,
     severity: str,
     title: str,
@@ -50,19 +78,22 @@ def create_alert_if_needed(
     now: datetime | None = None,
 ) -> bool:
     now = now or datetime.now(timezone.utc)
+    target_clause = _target_where_clause(server_id, uptime_monitor_id)
+    target_params = _target_params(server_id, uptime_monitor_id)
 
     unresolved = conn.execute(
         text(
             """
             SELECT id
             FROM alerts
-            WHERE server_id = :server_id
+            WHERE {target_clause}
               AND type = :alert_type
               AND is_resolved = FALSE
             LIMIT 1
             """
+            .replace("{target_clause}", target_clause)
         ),
-        {"server_id": str(server_id), "alert_type": alert_type},
+        {**target_params, "alert_type": alert_type},
     ).first()
     if unresolved:
         return False
@@ -72,13 +103,14 @@ def create_alert_if_needed(
             """
             SELECT ts
             FROM alerts
-            WHERE server_id = :server_id
+            WHERE {target_clause}
               AND type = :alert_type
             ORDER BY ts DESC
             LIMIT 1
             """
+            .replace("{target_clause}", target_clause)
         ),
-        {"server_id": str(server_id), "alert_type": alert_type},
+        {**target_params, "alert_type": alert_type},
     ).scalar()
 
     if latest is not None:
@@ -89,12 +121,13 @@ def create_alert_if_needed(
     conn.execute(
         text(
             """
-            INSERT INTO alerts (server_id, type, severity, title, details)
-            VALUES (:server_id, :alert_type, :severity, :title, CAST(:details AS jsonb))
+            INSERT INTO alerts (server_id, uptime_monitor_id, type, severity, title, details)
+            VALUES (:server_id, :uptime_monitor_id, :alert_type, :severity, :title, CAST(:details AS jsonb))
             """
         ),
         {
-            "server_id": str(server_id),
+            "server_id": str(server_id) if server_id is not None else None,
+            "uptime_monitor_id": str(uptime_monitor_id) if uptime_monitor_id is not None else None,
             "alert_type": alert_type,
             "severity": severity,
             "title": title,

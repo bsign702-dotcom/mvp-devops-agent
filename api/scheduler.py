@@ -1,18 +1,20 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 
-from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import text
 
 from .alerts import create_alert_if_needed, resolve_alert_type
 from .db import get_engine
 from .settings import get_settings
+from .services.uptime_service import UPTIME_SCHEDULER_INTERVAL_SECONDS, run_uptime_checks_cycle
 
 logger = logging.getLogger(__name__)
 
-_scheduler: BackgroundScheduler | None = None
+_scheduler: AsyncIOScheduler | None = None
 
 
 def _offline_check_job() -> None:
@@ -83,12 +85,20 @@ def start_scheduler() -> None:
     if _scheduler is not None:
         return
     settings = get_settings()
-    scheduler = BackgroundScheduler(timezone="UTC")
+    scheduler = AsyncIOScheduler(event_loop=asyncio.get_running_loop(), timezone="UTC")
     scheduler.add_job(
         _offline_check_job,
         "interval",
         seconds=settings.offline_check_interval_seconds,
         id="offline-check",
+        max_instances=1,
+        coalesce=True,
+    )
+    scheduler.add_job(
+        run_uptime_checks_cycle,
+        "interval",
+        seconds=UPTIME_SCHEDULER_INTERVAL_SECONDS,
+        id="uptime-checks",
         max_instances=1,
         coalesce=True,
     )

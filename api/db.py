@@ -41,8 +41,12 @@ def execute(query: str, params: dict[str, Any] | None = None) -> None:
         conn.execute(text(query), params or {})
 
 
-def _migration_sql_path() -> Path:
-    return Path(__file__).resolve().parent.parent / "migrations" / "001_init.sql"
+def _migrations_dir() -> Path:
+    return Path(__file__).resolve().parent.parent / "migrations"
+
+
+def _migration_paths() -> list[Path]:
+    return sorted(_migrations_dir().glob("*.sql"))
 
 
 def _split_sql_statements(sql: str) -> list[str]:
@@ -69,13 +73,36 @@ def ensure_migrated() -> None:
     with engine.begin() as conn:
         conn.execute(text("SELECT pg_advisory_lock(88223311)"))
         try:
-            exists = conn.execute(text("SELECT to_regclass('public.servers') AS name")).scalar_one()
-            if exists:
-                return
-            sql = _migration_sql_path().read_text(encoding="utf-8")
-            for statement in _split_sql_statements(sql):
-                conn.exec_driver_sql(statement)
-            logger.info("migrations_applied", extra={"event": "migrations_applied"})
+            conn.exec_driver_sql(
+                """
+                CREATE TABLE IF NOT EXISTS schema_migrations (
+                    version text PRIMARY KEY,
+                    applied_at timestamptz NOT NULL DEFAULT now()
+                )
+                """
+            )
+            applied = {
+                row[0]
+                for row in conn.exec_driver_sql("SELECT version FROM schema_migrations").fetchall()
+            }
+            applied_now: list[str] = []
+            for path in _migration_paths():
+                version = path.name
+                if version in applied:
+                    continue
+                sql = path.read_text(encoding="utf-8")
+                for statement in _split_sql_statements(sql):
+                    conn.exec_driver_sql(statement)
+                conn.execute(
+                    text("INSERT INTO schema_migrations (version) VALUES (:version)"),
+                    {"version": version},
+                )
+                applied_now.append(version)
+            if applied_now:
+                logger.info(
+                    "migrations_applied",
+                    extra={"event": "migrations_applied", "versions": applied_now},
+                )
         finally:
             conn.execute(text("SELECT pg_advisory_unlock(88223311)"))
 

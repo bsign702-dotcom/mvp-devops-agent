@@ -34,6 +34,10 @@ from .models import (
     ServerDeleteResponse,
     ServerDetailResponse,
     ServerListItem,
+    UptimeCheckItem,
+    UptimeMonitorCreateRequest,
+    UptimeMonitorDeleteResponse,
+    UptimeMonitorItem,
 )
 from .rate_limit import InMemoryRateLimiter
 from .scheduler import start_scheduler, stop_scheduler
@@ -133,14 +137,14 @@ async def request_logging_and_ip_rate_limit(request: Request, call_next):
 
 
 @app.on_event("startup")
-def _startup() -> None:
+async def _startup() -> None:
     wait_for_db()
     ensure_migrated()
     start_scheduler()
 
 
 @app.on_event("shutdown")
-def _shutdown() -> None:
+async def _shutdown() -> None:
     stop_scheduler()
 
 
@@ -237,7 +241,7 @@ def get_server(server_id: UUID) -> ServerDetailResponse:
         alert_rows = conn.execute(
             text(
                 """
-                SELECT id, server_id, ts, type, severity, title, details, is_resolved, resolved_at
+                SELECT id, server_id, uptime_monitor_id, ts, type, severity, title, details, is_resolved, resolved_at
                 FROM alerts
                 WHERE server_id = :server_id
                 ORDER BY ts DESC
@@ -259,10 +263,7 @@ def get_server(server_id: UUID) -> ServerDetailResponse:
         last_seen_at=server["last_seen_at"],
         metadata=metadata,
         last_metrics=MetricSummary(**dict(metric_row)) if metric_row else None,
-        alerts=[
-            AlertItem(**{**dict(row), "details": _normalize_json_field(row["details"])})
-            for row in alert_rows
-        ],
+        alerts=[_row_to_alert_item(row) for row in alert_rows],
     )
 
 
@@ -301,6 +302,120 @@ def _normalize_json_field(value: Any) -> Any:
         except json.JSONDecodeError:
             return value
     return value
+
+
+def _row_to_alert_item(row: Any) -> AlertItem:
+    data = dict(row)
+    data["details"] = _normalize_json_field(data.get("details"))
+    return AlertItem(**data)
+
+
+def _row_to_uptime_monitor_item(row: Any) -> UptimeMonitorItem:
+    return UptimeMonitorItem(**dict(row))
+
+
+@app.post("/v1/uptime-monitors", response_model=UptimeMonitorItem)
+def create_uptime_monitor(payload: UptimeMonitorCreateRequest) -> UptimeMonitorItem:
+    with get_engine().begin() as conn:
+        row = conn.execute(
+            text(
+                """
+                INSERT INTO uptime_monitors (
+                    name, url, check_interval_sec, timeout_sec, expected_status
+                ) VALUES (
+                    :name, :url, :check_interval_sec, :timeout_sec, :expected_status
+                )
+                RETURNING id, name, url, check_interval_sec, timeout_sec, expected_status,
+                          last_status, last_response_time_ms, last_checked_at,
+                          consecutive_failures, created_at
+                """
+            ),
+            {
+                "name": payload.name.strip(),
+                "url": str(payload.url),
+                "check_interval_sec": payload.check_interval_sec,
+                "timeout_sec": payload.timeout_sec,
+                "expected_status": payload.expected_status,
+            },
+        ).mappings().one()
+    return _row_to_uptime_monitor_item(row)
+
+
+@app.get("/v1/uptime-monitors", response_model=list[UptimeMonitorItem])
+def list_uptime_monitors() -> list[UptimeMonitorItem]:
+    with get_engine().connect() as conn:
+        rows = conn.execute(
+            text(
+                """
+                SELECT id, name, url, check_interval_sec, timeout_sec, expected_status,
+                       last_status, last_response_time_ms, last_checked_at,
+                       consecutive_failures, created_at
+                FROM uptime_monitors
+                ORDER BY created_at DESC
+                """
+            )
+        ).mappings().all()
+    return [_row_to_uptime_monitor_item(row) for row in rows]
+
+
+@app.get("/v1/uptime-monitors/{monitor_id}", response_model=UptimeMonitorItem)
+def get_uptime_monitor(monitor_id: UUID) -> UptimeMonitorItem:
+    with get_engine().connect() as conn:
+        row = conn.execute(
+            text(
+                """
+                SELECT id, name, url, check_interval_sec, timeout_sec, expected_status,
+                       last_status, last_response_time_ms, last_checked_at,
+                       consecutive_failures, created_at
+                FROM uptime_monitors
+                WHERE id = :monitor_id
+                """
+            ),
+            {"monitor_id": str(monitor_id)},
+        ).mappings().first()
+    if not row:
+        raise APIError(code="not_found", message="Uptime monitor not found", status_code=404)
+    return _row_to_uptime_monitor_item(row)
+
+
+@app.delete("/v1/uptime-monitors/{monitor_id}", response_model=UptimeMonitorDeleteResponse)
+def delete_uptime_monitor(monitor_id: UUID) -> UptimeMonitorDeleteResponse:
+    with get_engine().begin() as conn:
+        result = conn.execute(
+            text("DELETE FROM uptime_monitors WHERE id = :monitor_id"),
+            {"monitor_id": str(monitor_id)},
+        )
+        if not result.rowcount:
+            raise APIError(code="not_found", message="Uptime monitor not found", status_code=404)
+    return UptimeMonitorDeleteResponse(monitor_id=monitor_id)
+
+
+@app.get("/v1/uptime-monitors/{monitor_id}/checks", response_model=list[UptimeCheckItem])
+def list_uptime_checks(
+    monitor_id: UUID,
+    limit: int = Query(default=100, ge=1, le=500),
+) -> list[UptimeCheckItem]:
+    with get_engine().connect() as conn:
+        monitor_exists = conn.execute(
+            text("SELECT 1 FROM uptime_monitors WHERE id = :monitor_id"),
+            {"monitor_id": str(monitor_id)},
+        ).first()
+        if not monitor_exists:
+            raise APIError(code="not_found", message="Uptime monitor not found", status_code=404)
+
+        rows = conn.execute(
+            text(
+                """
+                SELECT id, monitor_id, status, response_time_ms, status_code, error_message, checked_at
+                FROM uptime_checks
+                WHERE monitor_id = :monitor_id
+                ORDER BY checked_at DESC
+                LIMIT :limit
+                """
+            ),
+            {"monitor_id": str(monitor_id), "limit": limit},
+        ).mappings().all()
+    return [UptimeCheckItem(**dict(row)) for row in rows]
 
 
 @app.post("/v1/ingest", response_model=IngestResponse)
@@ -427,6 +542,7 @@ def ingest(payload: IngestRequest, request: Request) -> IngestResponse:
 @app.get("/v1/alerts", response_model=list[AlertItem])
 def list_alerts(
     server_id: UUID | None = Query(default=None),
+    uptime_monitor_id: UUID | None = Query(default=None),
     resolved: bool | None = Query(default=None),
 ) -> list[AlertItem]:
     conditions: list[str] = []
@@ -434,13 +550,16 @@ def list_alerts(
     if server_id is not None:
         conditions.append("server_id = :server_id")
         params["server_id"] = str(server_id)
+    if uptime_monitor_id is not None:
+        conditions.append("uptime_monitor_id = :uptime_monitor_id")
+        params["uptime_monitor_id"] = str(uptime_monitor_id)
     if resolved is not None:
         conditions.append("is_resolved = :resolved")
         params["resolved"] = resolved
 
     where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
     query = f"""
-        SELECT id, server_id, ts, type, severity, title, details, is_resolved, resolved_at
+        SELECT id, server_id, uptime_monitor_id, ts, type, severity, title, details, is_resolved, resolved_at
         FROM alerts
         {where_clause}
         ORDER BY ts DESC
@@ -448,7 +567,4 @@ def list_alerts(
     """
     with get_engine().connect() as conn:
         rows = conn.execute(text(query), params).mappings().all()
-    return [
-        AlertItem(**{**dict(row), "details": _normalize_json_field(row["details"])})
-        for row in rows
-    ]
+    return [_row_to_alert_item(row) for row in rows]
