@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     smtp_from: str | None = Field(default=None, alias="SMTP_FROM")
     smtp_tls: bool = Field(True, alias="SMTP_TLS")
     send_recovery_emails: bool = Field(False, alias="SEND_RECOVERY_EMAILS")
+    uptime_slow_threshold_ms: int = Field(2000, alias="UPTIME_SLOW_THRESHOLD_MS")
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

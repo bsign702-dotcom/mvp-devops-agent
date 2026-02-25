@@ -130,6 +130,7 @@ async def _check_monitor(
 
 def _persist_outcome(monitor: dict[str, Any], outcome: MonitorCheckOutcome) -> dict[str, Any]:
     settings = get_settings()
+    slow_threshold_ms = max(1, int(settings.uptime_slow_threshold_ms))
     previous_failures = int(monitor.get("consecutive_failures") or 0)
     previous_status = str(monitor.get("last_status") or "unknown")
     new_failures = previous_failures + 1 if outcome.status == "down" else 0
@@ -177,6 +178,8 @@ def _persist_outcome(monitor: dict[str, Any], outcome: MonitorCheckOutcome) -> d
         )
 
         if outcome.status == "down":
+            # Down supersedes slow; close any outstanding slow alert while monitor is down.
+            resolve_alert_type(conn, None, "UPTIME_SLOW", uptime_monitor_id=outcome.monitor_id)
             if new_failures >= 3:
                 if create_alert_if_needed(
                     conn,
@@ -215,6 +218,25 @@ def _persist_outcome(monitor: dict[str, Any], outcome: MonitorCheckOutcome) -> d
                     alerts_created.append("UPTIME_RECOVERED")
                     # Recovery is an event-type alert; resolve it immediately so future recoveries can be emitted.
                     resolve_alert_type(conn, None, "UPTIME_RECOVERED", uptime_monitor_id=outcome.monitor_id)
+
+            if outcome.response_time_ms is not None and outcome.response_time_ms >= slow_threshold_ms:
+                if create_alert_if_needed(
+                    conn,
+                    uptime_monitor_id=outcome.monitor_id,
+                    alert_type="UPTIME_SLOW",
+                    severity="high",
+                    title=f"Uptime monitor is slow: {monitor['name']}",
+                    details={
+                        "url": monitor["url"],
+                        "response_time_ms": outcome.response_time_ms,
+                        "threshold_ms": slow_threshold_ms,
+                        "status_code": outcome.status_code,
+                    },
+                    dedupe_seconds=settings.alert_dedupe_seconds,
+                ):
+                    alerts_created.append("UPTIME_SLOW")
+            else:
+                resolve_alert_type(conn, None, "UPTIME_SLOW", uptime_monitor_id=outcome.monitor_id)
 
             if outcome.ssl_expires_at is not None:
                 now = datetime.now(timezone.utc)
