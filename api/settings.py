@@ -17,6 +17,13 @@ class Settings(BaseSettings):
     agent_rate_limit_per_minute: int = 120
     offline_check_interval_seconds: int = 60
     json_log_level: str = "INFO"
+    smtp_host: str | None = Field(default=None, alias="SMTP_HOST")
+    smtp_port: int = Field(587, alias="SMTP_PORT")
+    smtp_user: str | None = Field(default=None, alias="SMTP_USER")
+    smtp_pass: str | None = Field(default=None, alias="SMTP_PASS")
+    smtp_from: str | None = Field(default=None, alias="SMTP_FROM")
+    smtp_tls: bool = Field(True, alias="SMTP_TLS")
+    send_recovery_emails: bool = Field(False, alias="SEND_RECOVERY_EMAILS")
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

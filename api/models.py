@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, time
 from typing import Any, Literal
 from uuid import UUID
 
@@ -120,6 +120,66 @@ class UptimeCheckItem(BaseModel):
     status_code: int | None = None
     error_message: str | None = None
     checked_at: datetime
+
+
+class NotificationSettingUpsertRequest(BaseModel):
+    email: str
+    is_enabled: bool = True
+    cpu_threshold: int = Field(80, ge=1, le=100)
+    disk_threshold: int = Field(85, ge=1, le=100)
+    ram_threshold: int = Field(85, ge=1, le=100)
+    offline_threshold_sec: int = Field(120, ge=30, le=86400)
+    daily_report_time_utc: str = Field("08:00")
+
+    @field_validator("email")
+    @classmethod
+    def _validate_email(cls, value: str) -> str:
+        value = value.strip().lower()
+        if "@" not in value or "." not in value.split("@")[-1]:
+            raise ValueError("invalid email")
+        return value
+
+    @field_validator("daily_report_time_utc")
+    @classmethod
+    def _validate_daily_time(cls, value: str) -> str:
+        parts = value.strip().split(":")
+        if len(parts) != 2:
+            raise ValueError("daily_report_time_utc must be HH:MM")
+        hour = int(parts[0])
+        minute = int(parts[1])
+        if not (0 <= hour <= 23 and 0 <= minute <= 59):
+            raise ValueError("daily_report_time_utc must be HH:MM")
+        return f"{hour:02d}:{minute:02d}"
+
+
+class NotificationSettingItem(BaseModel):
+    id: UUID
+    email: str
+    is_enabled: bool
+    cpu_threshold: int
+    disk_threshold: int
+    ram_threshold: int
+    offline_threshold_sec: int
+    daily_report_time_utc: time
+    created_at: datetime
+
+
+class NotificationTestEmailRequest(BaseModel):
+    email: str
+
+    @field_validator("email")
+    @classmethod
+    def _validate_email(cls, value: str) -> str:
+        value = value.strip().lower()
+        if "@" not in value or "." not in value.split("@")[-1]:
+            raise ValueError("invalid email")
+        return value
+
+
+class NotificationTestEmailResponse(BaseModel):
+    ok: bool = True
+    email: str
+    message: str = "Test email sent"
 
 
 class HostInfo(BaseModel):

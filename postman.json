@@ -21,6 +21,18 @@
     {
       "key": "serverName",
       "value": "My VPS"
+    },
+    {
+      "key": "uptimeMonitorId",
+      "value": ""
+    },
+    {
+      "key": "uptimeMonitorName",
+      "value": "Main Site"
+    },
+    {
+      "key": "uptimeMonitorUrl",
+      "value": "https://omcard.net/health"
     }
   ],
   "item": [
@@ -229,6 +241,168 @@
               ]
             },
             "description": "Filter alerts by `serverId` and unresolved status."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Uptime Monitors",
+      "item": [
+        {
+          "name": "Create Uptime Monitor",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code >= 200 && pm.response.code < 300) {",
+                  "  const data = pm.response.json();",
+                  "  if (data.id) pm.collectionVariables.set('uptimeMonitorId', data.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"{{uptimeMonitorName}}\",\n  \"url\": \"{{uptimeMonitorUrl}}\",\n  \"check_interval_sec\": 30,\n  \"timeout_sec\": 10,\n  \"expected_status\": 200\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/uptime-monitors",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "uptime-monitors"
+              ]
+            },
+            "description": "Create an external uptime monitor and store `uptimeMonitorId` in collection variables."
+          },
+          "response": []
+        },
+        {
+          "name": "List Uptime Monitors",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/uptime-monitors",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "uptime-monitors"
+              ]
+            },
+            "description": "List uptime monitors with latest status/latency."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Uptime Monitor",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/uptime-monitors/{{uptimeMonitorId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "uptime-monitors",
+                "{{uptimeMonitorId}}"
+              ]
+            },
+            "description": "Get one uptime monitor by id."
+          },
+          "response": []
+        },
+        {
+          "name": "List Uptime Checks",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/uptime-monitors/{{uptimeMonitorId}}/checks?limit=100",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "uptime-monitors",
+                "{{uptimeMonitorId}}",
+                "checks"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "100"
+                }
+              ]
+            },
+            "description": "List recent checks for the uptime monitor."
+          },
+          "response": []
+        },
+        {
+          "name": "Delete Uptime Monitor",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/uptime-monitors/{{uptimeMonitorId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "uptime-monitors",
+                "{{uptimeMonitorId}}"
+              ]
+            },
+            "description": "Delete uptime monitor and cascade its checks/alerts."
+          },
+          "response": []
+        },
+        {
+          "name": "List Alerts (By Uptime Monitor, Unresolved)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/alerts?uptime_monitor_id={{uptimeMonitorId}}&resolved=false",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "alerts"
+              ],
+              "query": [
+                {
+                  "key": "uptime_monitor_id",
+                  "value": "{{uptimeMonitorId}}"
+                },
+                {
+                  "key": "resolved",
+                  "value": "false"
+                }
+              ]
+            },
+            "description": "Filter alerts for one uptime monitor (unresolved only)."
           },
           "response": []
         }

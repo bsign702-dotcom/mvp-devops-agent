@@ -10,6 +10,7 @@ from sqlalchemy import text
 from .alerts import create_alert_if_needed, resolve_alert_type
 from .db import get_engine
 from .settings import get_settings
+from .services.notification_service import run_daily_reports_cycle
 from .services.uptime_service import UPTIME_SCHEDULER_INTERVAL_SECONDS, run_uptime_checks_cycle
 
 logger = logging.getLogger(__name__)
@@ -99,6 +100,14 @@ def start_scheduler() -> None:
         "interval",
         seconds=UPTIME_SCHEDULER_INTERVAL_SECONDS,
         id="uptime-checks",
+        max_instances=1,
+        coalesce=True,
+    )
+    scheduler.add_job(
+        run_daily_reports_cycle,
+        "interval",
+        minutes=1,
+        id="daily-reports",
         max_instances=1,
         coalesce=True,
     )

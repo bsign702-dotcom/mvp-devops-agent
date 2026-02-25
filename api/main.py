@@ -29,6 +29,10 @@ from .models import (
     IngestRequest,
     IngestResponse,
     MetricSummary,
+    NotificationSettingItem,
+    NotificationSettingUpsertRequest,
+    NotificationTestEmailRequest,
+    NotificationTestEmailResponse,
     ServerCreateRequest,
     ServerCreateResponse,
     ServerDeleteResponse,
@@ -42,6 +46,11 @@ from .models import (
 from .rate_limit import InMemoryRateLimiter
 from .scheduler import start_scheduler, stop_scheduler
 from .security import generate_agent_token, hash_agent_token
+from .services.notification_service import (
+    list_notification_settings as svc_list_notification_settings,
+    send_test_email as svc_send_test_email,
+    upsert_notification_setting as svc_upsert_notification_setting,
+)
 from .settings import get_settings
 
 
@@ -416,6 +425,26 @@ def list_uptime_checks(
             {"monitor_id": str(monitor_id), "limit": limit},
         ).mappings().all()
     return [UptimeCheckItem(**dict(row)) for row in rows]
+
+
+@app.post("/v1/notifications/settings", response_model=NotificationSettingItem)
+def upsert_notifications_settings(payload: NotificationSettingUpsertRequest) -> NotificationSettingItem:
+    with get_engine().begin() as conn:
+        row = svc_upsert_notification_setting(conn, payload.model_dump())
+    return NotificationSettingItem(**row)
+
+
+@app.get("/v1/notifications/settings", response_model=list[NotificationSettingItem])
+def get_notifications_settings() -> list[NotificationSettingItem]:
+    with get_engine().connect() as conn:
+        rows = svc_list_notification_settings(conn)
+    return [NotificationSettingItem(**row) for row in rows]
+
+
+@app.post("/v1/notifications/test-email", response_model=NotificationTestEmailResponse)
+def send_notifications_test_email(payload: NotificationTestEmailRequest) -> NotificationTestEmailResponse:
+    svc_send_test_email(payload.email, settings.api_base_url)
+    return NotificationTestEmailResponse(email=payload.email)
 
 
 @app.post("/v1/ingest", response_model=IngestResponse)

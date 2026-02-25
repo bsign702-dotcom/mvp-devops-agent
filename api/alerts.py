@@ -7,6 +7,8 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
+from .services.notification_service import notify_for_alert_change
+
 
 def infer_log_level(message: str) -> str:
     lowered = message.lower()
@@ -15,6 +17,32 @@ def infer_log_level(message: str) -> str:
     if "warn" in lowered:
         return "warn"
     return "info"
+
+
+def _metric_alert_thresholds(conn: Connection) -> dict[str, int]:
+    defaults = {"cpu": 90, "ram": 90, "disk": 90}
+    try:
+        row = conn.execute(
+            text(
+                """
+                SELECT
+                    MIN(cpu_threshold) AS min_cpu_threshold,
+                    MIN(ram_threshold) AS min_ram_threshold,
+                    MIN(disk_threshold) AS min_disk_threshold
+                FROM notification_settings
+                WHERE is_enabled = TRUE
+                """
+            )
+        ).mappings().first()
+    except Exception:
+        return defaults
+    if not row:
+        return defaults
+    return {
+        "cpu": int(row["min_cpu_threshold"] or defaults["cpu"]),
+        "ram": int(row["min_ram_threshold"] or defaults["ram"]),
+        "disk": int(row["min_disk_threshold"] or defaults["disk"]),
+    }
 
 
 def is_service_restart_line(message: str) -> bool:
@@ -57,12 +85,20 @@ def resolve_alert_type(
             WHERE {target_clause}
               AND type = :alert_type
               AND is_resolved = FALSE
+            RETURNING id, server_id, uptime_monitor_id, ts, type, severity, title, details, is_resolved, resolved_at
             """
             .replace("{target_clause}", target_clause)
         ),
         params,
     )
-    return int(result.rowcount or 0)
+    rows = result.mappings().all()
+    for row in rows:
+        try:
+            notify_for_alert_change(conn, dict(row), is_recovery=True)
+        except Exception:
+            # Notification failures must never block alert resolution.
+            pass
+    return len(rows)
 
 
 def create_alert_if_needed(
@@ -118,11 +154,12 @@ def create_alert_if_needed(
         if age_seconds < dedupe_seconds:
             return False
 
-    conn.execute(
+    row = conn.execute(
         text(
             """
             INSERT INTO alerts (server_id, uptime_monitor_id, type, severity, title, details)
             VALUES (:server_id, :uptime_monitor_id, :alert_type, :severity, :title, CAST(:details AS jsonb))
+            RETURNING id, server_id, uptime_monitor_id, ts, type, severity, title, details, is_resolved, resolved_at
             """
         ),
         {
@@ -133,7 +170,12 @@ def create_alert_if_needed(
             "title": title,
             "details": _json_dump(details),
         },
-    )
+    ).mappings().one()
+    try:
+        notify_for_alert_change(conn, dict(row), is_recovery=False)
+    except Exception:
+        # Notification failures must never block alert creation.
+        pass
     return True
 
 
@@ -147,36 +189,37 @@ def evaluate_metric_alerts(
     dedupe_seconds: int,
 ) -> list[str]:
     created: list[str] = []
-    if cpu_percent is not None and cpu_percent >= 90:
+    thresholds = _metric_alert_thresholds(conn)
+    if cpu_percent is not None and cpu_percent >= thresholds["cpu"]:
         if create_alert_if_needed(
             conn,
             server_id=server_id,
             alert_type="cpu_high",
             severity="high",
             title="CPU usage is high",
-            details={"cpu_percent": cpu_percent, "threshold": 90},
+            details={"cpu_percent": cpu_percent, "threshold": thresholds["cpu"]},
             dedupe_seconds=dedupe_seconds,
         ):
             created.append("cpu_high")
-    if ram_percent is not None and ram_percent >= 90:
+    if ram_percent is not None and ram_percent >= thresholds["ram"]:
         if create_alert_if_needed(
             conn,
             server_id=server_id,
             alert_type="ram_high",
             severity="high",
             title="RAM usage is high",
-            details={"ram_percent": ram_percent, "threshold": 90},
+            details={"ram_percent": ram_percent, "threshold": thresholds["ram"]},
             dedupe_seconds=dedupe_seconds,
         ):
             created.append("ram_high")
-    if disk_percent is not None and disk_percent >= 90:
+    if disk_percent is not None and disk_percent >= thresholds["disk"]:
         if create_alert_if_needed(
             conn,
             server_id=server_id,
             alert_type="disk_high",
             severity="critical",
             title="Disk usage is high",
-            details={"disk_percent": disk_percent, "threshold": 90},
+            details={"disk_percent": disk_percent, "threshold": thresholds["disk"]},
             dedupe_seconds=dedupe_seconds,
         ):
             created.append("disk_high")
