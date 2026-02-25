@@ -182,6 +182,14 @@ class NotificationTestEmailResponse(BaseModel):
     message: str = "Test email sent"
 
 
+class UserMeResponse(BaseModel):
+    user_id: UUID
+    supabase_user_id: UUID
+    email: str
+    full_name: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class HostInfo(BaseModel):
     hostname: str | None = None
     os: str | None = None

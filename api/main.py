@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-from fastapi import FastAPI, Query, Request
+from fastapi import Depends, FastAPI, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse
 from sqlalchemy import text
@@ -42,10 +42,12 @@ from .models import (
     UptimeMonitorCreateRequest,
     UptimeMonitorDeleteResponse,
     UptimeMonitorItem,
+    UserMeResponse,
 )
 from .rate_limit import InMemoryRateLimiter
 from .scheduler import start_scheduler, stop_scheduler
 from .security import generate_agent_token, hash_agent_token
+from .services.auth_service import AuthenticatedUser, require_authenticated_user
 from .services.notification_service import (
     list_notification_settings as svc_list_notification_settings,
     send_test_email as svc_send_test_email,
@@ -172,8 +174,22 @@ def get_install_script() -> PlainTextResponse:
     )
 
 
+@app.get("/v1/auth/me", response_model=UserMeResponse)
+def auth_me(current_user: AuthenticatedUser = Depends(require_authenticated_user)) -> UserMeResponse:
+    return UserMeResponse(
+        user_id=current_user.local_user_id,
+        supabase_user_id=current_user.supabase_user_id,
+        email=current_user.email,
+        full_name=current_user.full_name,
+        metadata=current_user.metadata,
+    )
+
+
 @app.post("/v1/servers", response_model=ServerCreateResponse)
-def create_server(payload: ServerCreateRequest) -> ServerCreateResponse:
+def create_server(
+    payload: ServerCreateRequest,
+    _: AuthenticatedUser = Depends(require_authenticated_user),
+) -> ServerCreateResponse:
     raw_token = generate_agent_token()
     token_hash = hash_agent_token(raw_token, settings.agent_token_pepper)
 
@@ -202,7 +218,7 @@ def create_server(payload: ServerCreateRequest) -> ServerCreateResponse:
 
 
 @app.get("/v1/servers", response_model=list[ServerListItem])
-def list_servers() -> list[ServerListItem]:
+def list_servers(_: AuthenticatedUser = Depends(require_authenticated_user)) -> list[ServerListItem]:
     rows = []
     with get_engine().connect() as conn:
         rows = conn.execute(
@@ -218,7 +234,10 @@ def list_servers() -> list[ServerListItem]:
 
 
 @app.get("/v1/servers/{server_id}", response_model=ServerDetailResponse)
-def get_server(server_id: UUID) -> ServerDetailResponse:
+def get_server(
+    server_id: UUID,
+    _: AuthenticatedUser = Depends(require_authenticated_user),
+) -> ServerDetailResponse:
     with get_engine().connect() as conn:
         server = conn.execute(
             text(
@@ -277,7 +296,10 @@ def get_server(server_id: UUID) -> ServerDetailResponse:
 
 
 @app.delete("/v1/servers/{server_id}", response_model=ServerDeleteResponse)
-def delete_server(server_id: UUID) -> ServerDeleteResponse:
+def delete_server(
+    server_id: UUID,
+    _: AuthenticatedUser = Depends(require_authenticated_user),
+) -> ServerDeleteResponse:
     with get_engine().begin() as conn:
         deleted = conn.execute(
             text(
@@ -324,7 +346,10 @@ def _row_to_uptime_monitor_item(row: Any) -> UptimeMonitorItem:
 
 
 @app.post("/v1/uptime-monitors", response_model=UptimeMonitorItem)
-def create_uptime_monitor(payload: UptimeMonitorCreateRequest) -> UptimeMonitorItem:
+def create_uptime_monitor(
+    payload: UptimeMonitorCreateRequest,
+    _: AuthenticatedUser = Depends(require_authenticated_user),
+) -> UptimeMonitorItem:
     with get_engine().begin() as conn:
         row = conn.execute(
             text(
@@ -351,7 +376,7 @@ def create_uptime_monitor(payload: UptimeMonitorCreateRequest) -> UptimeMonitorI
 
 
 @app.get("/v1/uptime-monitors", response_model=list[UptimeMonitorItem])
-def list_uptime_monitors() -> list[UptimeMonitorItem]:
+def list_uptime_monitors(_: AuthenticatedUser = Depends(require_authenticated_user)) -> list[UptimeMonitorItem]:
     with get_engine().connect() as conn:
         rows = conn.execute(
             text(
@@ -368,7 +393,10 @@ def list_uptime_monitors() -> list[UptimeMonitorItem]:
 
 
 @app.get("/v1/uptime-monitors/{monitor_id}", response_model=UptimeMonitorItem)
-def get_uptime_monitor(monitor_id: UUID) -> UptimeMonitorItem:
+def get_uptime_monitor(
+    monitor_id: UUID,
+    _: AuthenticatedUser = Depends(require_authenticated_user),
+) -> UptimeMonitorItem:
     with get_engine().connect() as conn:
         row = conn.execute(
             text(
@@ -388,7 +416,10 @@ def get_uptime_monitor(monitor_id: UUID) -> UptimeMonitorItem:
 
 
 @app.delete("/v1/uptime-monitors/{monitor_id}", response_model=UptimeMonitorDeleteResponse)
-def delete_uptime_monitor(monitor_id: UUID) -> UptimeMonitorDeleteResponse:
+def delete_uptime_monitor(
+    monitor_id: UUID,
+    _: AuthenticatedUser = Depends(require_authenticated_user),
+) -> UptimeMonitorDeleteResponse:
     with get_engine().begin() as conn:
         result = conn.execute(
             text("DELETE FROM uptime_monitors WHERE id = :monitor_id"),
@@ -403,6 +434,7 @@ def delete_uptime_monitor(monitor_id: UUID) -> UptimeMonitorDeleteResponse:
 def list_uptime_checks(
     monitor_id: UUID,
     limit: int = Query(default=100, ge=1, le=500),
+    _: AuthenticatedUser = Depends(require_authenticated_user),
 ) -> list[UptimeCheckItem]:
     with get_engine().connect() as conn:
         monitor_exists = conn.execute(
@@ -428,21 +460,29 @@ def list_uptime_checks(
 
 
 @app.post("/v1/notifications/settings", response_model=NotificationSettingItem)
-def upsert_notifications_settings(payload: NotificationSettingUpsertRequest) -> NotificationSettingItem:
+def upsert_notifications_settings(
+    payload: NotificationSettingUpsertRequest,
+    _: AuthenticatedUser = Depends(require_authenticated_user),
+) -> NotificationSettingItem:
     with get_engine().begin() as conn:
         row = svc_upsert_notification_setting(conn, payload.model_dump())
     return NotificationSettingItem(**row)
 
 
 @app.get("/v1/notifications/settings", response_model=list[NotificationSettingItem])
-def get_notifications_settings() -> list[NotificationSettingItem]:
+def get_notifications_settings(
+    _: AuthenticatedUser = Depends(require_authenticated_user),
+) -> list[NotificationSettingItem]:
     with get_engine().connect() as conn:
         rows = svc_list_notification_settings(conn)
     return [NotificationSettingItem(**row) for row in rows]
 
 
 @app.post("/v1/notifications/test-email", response_model=NotificationTestEmailResponse)
-def send_notifications_test_email(payload: NotificationTestEmailRequest) -> NotificationTestEmailResponse:
+def send_notifications_test_email(
+    payload: NotificationTestEmailRequest,
+    _: AuthenticatedUser = Depends(require_authenticated_user),
+) -> NotificationTestEmailResponse:
     svc_send_test_email(payload.email, settings.api_base_url)
     return NotificationTestEmailResponse(email=payload.email)
 
@@ -573,6 +613,7 @@ def list_alerts(
     server_id: UUID | None = Query(default=None),
     uptime_monitor_id: UUID | None = Query(default=None),
     resolved: bool | None = Query(default=None),
+    _: AuthenticatedUser = Depends(require_authenticated_user),
 ) -> list[AlertItem]:
     conditions: list[str] = []
     params: dict[str, Any] = {}

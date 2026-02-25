@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     smtp_tls: bool = Field(True, alias="SMTP_TLS")
     send_recovery_emails: bool = Field(False, alias="SEND_RECOVERY_EMAILS")
     uptime_slow_threshold_ms: int = Field(2000, alias="UPTIME_SLOW_THRESHOLD_MS")
+    supabase_url: str | None = Field(default=None, alias="SUPABASE_URL")
+    supabase_anon_key: str | None = Field(default=None, alias="SUPABASE_ANON_KEY")
+    supabase_auth_timeout_sec: int = Field(10, alias="SUPABASE_AUTH_TIMEOUT_SEC")
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
