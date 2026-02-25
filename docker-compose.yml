@@ -1,0 +1,37 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: devops
+      POSTGRES_PASSWORD: devops
+      POSTGRES_DB: devops
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U devops -d devops"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  api:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://devops:devops@postgres:5432/devops
+      AGENT_TOKEN_PEPPER: super_secret_pepper_change_me
+      OFFLINE_AFTER_SECONDS: "120"
+      ALERT_DEDUPE_SECONDS: "600"
+      APP_PUBLIC_INSTALL_SH_URL: http://localhost:8000/install.sh
+      API_BASE_URL: http://localhost:8000
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

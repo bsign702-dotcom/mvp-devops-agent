@@ -1,0 +1,218 @@
+{
+  "info": {
+    "name": "AI DevOps Monitor MVP API",
+    "_postman_id": "7f5e1d70-0b66-4f65-9f4b-9e4c8b43b1aa",
+    "description": "Postman collection for the AI DevOps Monitor MVP backend (FastAPI + PostgreSQL).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8000"
+    },
+    {
+      "key": "serverId",
+      "value": ""
+    },
+    {
+      "key": "agentToken",
+      "value": ""
+    },
+    {
+      "key": "serverName",
+      "value": "My VPS"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/health",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "health"
+          ]
+        },
+        "description": "Health endpoint."
+      },
+      "response": []
+    },
+    {
+      "name": "Servers",
+      "item": [
+        {
+          "name": "Create Server",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code >= 200 && pm.response.code < 300) {",
+                  "  const data = pm.response.json();",
+                  "  if (data.server_id) pm.collectionVariables.set('serverId', data.server_id);",
+                  "  if (data.agent_token) pm.collectionVariables.set('agentToken', data.agent_token);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"{{serverName}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/servers",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "servers"
+              ]
+            },
+            "description": "Creates a server, returns one-time agent token and install command. Stores `serverId` and `agentToken` in collection variables."
+          },
+          "response": []
+        },
+        {
+          "name": "List Servers",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/servers",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "servers"
+              ]
+            },
+            "description": "Lists all servers."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Server Details",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/servers/{{serverId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "servers",
+                "{{serverId}}"
+              ]
+            },
+            "description": "Server details including metadata, latest metrics, and last 20 alerts. Requires `serverId` variable."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Ingest",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{agentToken}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"ts\": \"2026-01-01T00:00:00Z\",\n  \"host\": {\n    \"hostname\": \"demo\",\n    \"os\": \"Linux\",\n    \"os_release\": \"6.8\",\n    \"machine\": \"x86_64\"\n  },\n  \"metrics\": {\n    \"cpu_percent\": 12.3,\n    \"ram_percent\": 55.1,\n    \"disk_percent\": 70.2,\n    \"loadavg\": [0.12, 0.22, 0.30],\n    \"net_bytes_sent\": 123,\n    \"net_bytes_recv\": 456\n  },\n  \"docker\": {\n    \"containers\": [\n      {\n        \"id\": \"abc123\",\n        \"image\": \"nginx:latest\",\n        \"name\": \"nginx\",\n        \"status\": \"Up 1 hour\"\n      }\n    ],\n    \"events\": []\n  },\n  \"logs\": {\n    \"systemd\": {\n      \"nginx\": [\n        \"Started nginx\"\n      ],\n      \"ssh\": [\n        \"Accepted publickey\"\n      ]\n    }\n  }\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/v1/ingest",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "v1",
+            "ingest"
+          ]
+        },
+        "description": "Agent ingestion endpoint. Requires `agentToken` collection variable from Create Server response."
+      },
+      "response": []
+    },
+    {
+      "name": "Alerts",
+      "item": [
+        {
+          "name": "List Alerts (All)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/alerts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "alerts"
+              ]
+            },
+            "description": "List alerts across servers."
+          },
+          "response": []
+        },
+        {
+          "name": "List Alerts (By Server, Unresolved)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/alerts?server_id={{serverId}}&resolved=false",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "alerts"
+              ],
+              "query": [
+                {
+                  "key": "server_id",
+                  "value": "{{serverId}}"
+                },
+                {
+                  "key": "resolved",
+                  "value": "false"
+                }
+              ]
+            },
+            "description": "Filter alerts by `serverId` and unresolved status."
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}
