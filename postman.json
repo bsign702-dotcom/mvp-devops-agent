@@ -2,13 +2,17 @@
   "info": {
     "name": "AI DevOps Monitor MVP API",
     "_postman_id": "7f5e1d70-0b66-4f65-9f4b-9e4c8b43b1aa",
-    "description": "Postman collection for the AI DevOps Monitor MVP backend (FastAPI + PostgreSQL).",
+    "description": "Postman collection for AI DevOps Monitor backend (FastAPI + PostgreSQL) with Supabase auth, servers, ingest, alerts, uptime monitors, and notifications.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
     {
       "key": "baseUrl",
       "value": "http://localhost:8000"
+    },
+    {
+      "key": "supabaseAccessToken",
+      "value": ""
     },
     {
       "key": "serverId",
@@ -33,6 +37,14 @@
     {
       "key": "uptimeMonitorUrl",
       "value": "https://omcard.net/health"
+    },
+    {
+      "key": "notificationEmail",
+      "value": "you@example.com"
+    },
+    {
+      "key": "dailyReportTimeUtc",
+      "value": "08:00"
     }
   ],
   "item": [
@@ -50,9 +62,39 @@
             "health"
           ]
         },
-        "description": "Health endpoint."
+        "description": "Public health endpoint."
       },
       "response": []
+    },
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Get Current User (Supabase)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{supabaseAccessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/auth/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "auth",
+                "me"
+              ]
+            },
+            "description": "Validates Supabase bearer token with backend and returns the local synced user record."
+          },
+          "response": []
+        }
+      ]
     },
     {
       "name": "Servers",
@@ -78,6 +120,10 @@
             "method": "POST",
             "header": [
               {
+                "key": "Authorization",
+                "value": "Bearer {{supabaseAccessToken}}"
+              },
+              {
                 "key": "Content-Type",
                 "value": "application/json"
               }
@@ -96,7 +142,7 @@
                 "servers"
               ]
             },
-            "description": "Creates a server, returns one-time agent token and install command. Stores `serverId` and `agentToken` in collection variables."
+            "description": "Creates a server for the authenticated user, returns one-time agent token and install command. Stores `serverId` and `agentToken` in collection variables."
           },
           "response": []
         },
@@ -104,7 +150,12 @@
           "name": "List Servers",
           "request": {
             "method": "GET",
-            "header": [],
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{supabaseAccessToken}}"
+              }
+            ],
             "url": {
               "raw": "{{baseUrl}}/v1/servers",
               "host": [
@@ -115,7 +166,7 @@
                 "servers"
               ]
             },
-            "description": "Lists all servers."
+            "description": "Lists servers owned by the authenticated user."
           },
           "response": []
         },
@@ -123,7 +174,12 @@
           "name": "Get Server Details",
           "request": {
             "method": "GET",
-            "header": [],
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{supabaseAccessToken}}"
+              }
+            ],
             "url": {
               "raw": "{{baseUrl}}/v1/servers/{{serverId}}",
               "host": [
@@ -135,7 +191,7 @@
                 "{{serverId}}"
               ]
             },
-            "description": "Server details including metadata, latest metrics, and last 20 alerts. Requires `serverId` variable."
+            "description": "Server details (must belong to current user), including metadata, latest metrics, and recent alerts."
           },
           "response": []
         },
@@ -143,7 +199,12 @@
           "name": "Delete Server",
           "request": {
             "method": "DELETE",
-            "header": [],
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{supabaseAccessToken}}"
+              }
+            ],
             "url": {
               "raw": "{{baseUrl}}/v1/servers/{{serverId}}",
               "host": [
@@ -155,14 +216,14 @@
                 "{{serverId}}"
               ]
             },
-            "description": "Deletes a server and cascades related metrics/logs/alerts. Requires `serverId` variable."
+            "description": "Deletes a server owned by the current user and cascades related metrics/logs/alerts."
           },
           "response": []
         }
       ]
     },
     {
-      "name": "Ingest",
+      "name": "Ingest (Agent Token)",
       "request": {
         "method": "POST",
         "header": [
@@ -177,7 +238,7 @@
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"ts\": \"2026-01-01T00:00:00Z\",\n  \"host\": {\n    \"hostname\": \"demo\",\n    \"os\": \"Linux\",\n    \"os_release\": \"6.8\",\n    \"machine\": \"x86_64\"\n  },\n  \"metrics\": {\n    \"cpu_percent\": 12.3,\n    \"ram_percent\": 55.1,\n    \"disk_percent\": 70.2,\n    \"loadavg\": [0.12, 0.22, 0.30],\n    \"net_bytes_sent\": 123,\n    \"net_bytes_recv\": 456\n  },\n  \"docker\": {\n    \"containers\": [\n      {\n        \"id\": \"abc123\",\n        \"image\": \"nginx:latest\",\n        \"name\": \"nginx\",\n        \"status\": \"Up 1 hour\"\n      }\n    ],\n    \"events\": []\n  },\n  \"logs\": {\n    \"systemd\": {\n      \"nginx\": [\n        \"Started nginx\"\n      ],\n      \"ssh\": [\n        \"Accepted publickey\"\n      ]\n    }\n  }\n}"
+          "raw": "{\n  \"ts\": \"2026-01-01T00:00:00Z\",\n  \"host\": {\n    \"hostname\": \"demo\",\n    \"os\": \"Linux\",\n    \"os_release\": \"6.8\",\n    \"machine\": \"x86_64\"\n  },\n  \"metrics\": {\n    \"cpu_percent\": 12.3,\n    \"ram_percent\": 55.1,\n    \"disk_percent\": 70.2,\n    \"loadavg\": [0.12, 0.22, 0.30],\n    \"net_bytes_sent\": 123,\n    \"net_bytes_recv\": 456\n  },\n  \"docker\": {\n    \"containers\": [\n      {\n        \"id\": \"abc123\",\n        \"image\": \"nginx:latest\",\n        \"name\": \"nginx\",\n        \"status\": \"Up 1 hour\"\n      }\n    ],\n    \"events\": []\n  },\n  \"logs\": {\n    \"systemd\": {\n      \"nginx\": [\"Started nginx\"],\n      \"ssh\": [\"Accepted publickey\"]\n    }\n  }\n}"
         },
         "url": {
           "raw": "{{baseUrl}}/v1/ingest",
@@ -189,7 +250,7 @@
             "ingest"
           ]
         },
-        "description": "Agent ingestion endpoint. Requires `agentToken` collection variable from Create Server response."
+        "description": "Agent ingestion endpoint (server agent token auth, not Supabase auth)."
       },
       "response": []
     },
@@ -200,7 +261,12 @@
           "name": "List Alerts (All)",
           "request": {
             "method": "GET",
-            "header": [],
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{supabaseAccessToken}}"
+              }
+            ],
             "url": {
               "raw": "{{baseUrl}}/v1/alerts",
               "host": [
@@ -211,7 +277,37 @@
                 "alerts"
               ]
             },
-            "description": "List alerts across servers."
+            "description": "List alerts for the authenticated user."
+          },
+          "response": []
+        },
+        {
+          "name": "List Alerts (Unresolved)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{supabaseAccessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/alerts?resolved=false",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "alerts"
+              ],
+              "query": [
+                {
+                  "key": "resolved",
+                  "value": "false"
+                }
+              ]
+            },
+            "description": "List unresolved alerts for the authenticated user."
           },
           "response": []
         },
@@ -219,7 +315,12 @@
           "name": "List Alerts (By Server, Unresolved)",
           "request": {
             "method": "GET",
-            "header": [],
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{supabaseAccessToken}}"
+              }
+            ],
             "url": {
               "raw": "{{baseUrl}}/v1/alerts?server_id={{serverId}}&resolved=false",
               "host": [
@@ -240,7 +341,41 @@
                 }
               ]
             },
-            "description": "Filter alerts by `serverId` and unresolved status."
+            "description": "Filter alerts by `serverId` (must belong to current user) and unresolved status."
+          },
+          "response": []
+        },
+        {
+          "name": "List Alerts (By Uptime Monitor, Unresolved)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{supabaseAccessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/alerts?uptime_monitor_id={{uptimeMonitorId}}&resolved=false",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "alerts"
+              ],
+              "query": [
+                {
+                  "key": "uptime_monitor_id",
+                  "value": "{{uptimeMonitorId}}"
+                },
+                {
+                  "key": "resolved",
+                  "value": "false"
+                }
+              ]
+            },
+            "description": "Filter alerts for one uptime monitor (unresolved only)."
           },
           "response": []
         }
@@ -269,6 +404,10 @@
             "method": "POST",
             "header": [
               {
+                "key": "Authorization",
+                "value": "Bearer {{supabaseAccessToken}}"
+              },
+              {
                 "key": "Content-Type",
                 "value": "application/json"
               }
@@ -287,7 +426,7 @@
                 "uptime-monitors"
               ]
             },
-            "description": "Create an external uptime monitor and store `uptimeMonitorId` in collection variables."
+            "description": "Create an uptime monitor for the authenticated user and store `uptimeMonitorId`."
           },
           "response": []
         },
@@ -295,7 +434,12 @@
           "name": "List Uptime Monitors",
           "request": {
             "method": "GET",
-            "header": [],
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{supabaseAccessToken}}"
+              }
+            ],
             "url": {
               "raw": "{{baseUrl}}/v1/uptime-monitors",
               "host": [
@@ -306,7 +450,7 @@
                 "uptime-monitors"
               ]
             },
-            "description": "List uptime monitors with latest status/latency."
+            "description": "List uptime monitors owned by the authenticated user."
           },
           "response": []
         },
@@ -314,7 +458,12 @@
           "name": "Get Uptime Monitor",
           "request": {
             "method": "GET",
-            "header": [],
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{supabaseAccessToken}}"
+              }
+            ],
             "url": {
               "raw": "{{baseUrl}}/v1/uptime-monitors/{{uptimeMonitorId}}",
               "host": [
@@ -326,7 +475,7 @@
                 "{{uptimeMonitorId}}"
               ]
             },
-            "description": "Get one uptime monitor by id."
+            "description": "Get one uptime monitor by id (current user only)."
           },
           "response": []
         },
@@ -334,7 +483,12 @@
           "name": "List Uptime Checks",
           "request": {
             "method": "GET",
-            "header": [],
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{supabaseAccessToken}}"
+              }
+            ],
             "url": {
               "raw": "{{baseUrl}}/v1/uptime-monitors/{{uptimeMonitorId}}/checks?limit=100",
               "host": [
@@ -353,7 +507,7 @@
                 }
               ]
             },
-            "description": "List recent checks for the uptime monitor."
+            "description": "List recent checks for a user's uptime monitor."
           },
           "response": []
         },
@@ -361,7 +515,12 @@
           "name": "Delete Uptime Monitor",
           "request": {
             "method": "DELETE",
-            "header": [],
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{supabaseAccessToken}}"
+              }
+            ],
             "url": {
               "raw": "{{baseUrl}}/v1/uptime-monitors/{{uptimeMonitorId}}",
               "host": [
@@ -373,36 +532,103 @@
                 "{{uptimeMonitorId}}"
               ]
             },
-            "description": "Delete uptime monitor and cascade its checks/alerts."
+            "description": "Delete an uptime monitor owned by current user (cascades checks/alerts)."
           },
           "response": []
-        },
+        }
+      ]
+    },
+    {
+      "name": "Notifications",
+      "item": [
         {
-          "name": "List Alerts (By Uptime Monitor, Unresolved)",
+          "name": "Upsert Notification Settings",
           "request": {
-            "method": "GET",
-            "header": [],
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{supabaseAccessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{notificationEmail}}\",\n  \"is_enabled\": true,\n  \"cpu_threshold\": 80,\n  \"disk_threshold\": 85,\n  \"ram_threshold\": 85,\n  \"offline_threshold_sec\": 120,\n  \"daily_report_time_utc\": \"{{dailyReportTimeUtc}}\"\n}"
+            },
             "url": {
-              "raw": "{{baseUrl}}/v1/alerts?uptime_monitor_id={{uptimeMonitorId}}&resolved=false",
+              "raw": "{{baseUrl}}/v1/notifications/settings",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "v1",
-                "alerts"
-              ],
-              "query": [
-                {
-                  "key": "uptime_monitor_id",
-                  "value": "{{uptimeMonitorId}}"
-                },
-                {
-                  "key": "resolved",
-                  "value": "false"
-                }
+                "notifications",
+                "settings"
               ]
             },
-            "description": "Filter alerts for one uptime monitor (unresolved only)."
+            "description": "Create/update notification recipient settings for the authenticated user."
+          },
+          "response": []
+        },
+        {
+          "name": "List Notification Settings",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{supabaseAccessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/notifications/settings",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "notifications",
+                "settings"
+              ]
+            },
+            "description": "List notification settings owned by the authenticated user."
+          },
+          "response": []
+        },
+        {
+          "name": "Test Notification Email",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{supabaseAccessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{notificationEmail}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/notifications/test-email",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "notifications",
+                "test-email"
+              ]
+            },
+            "description": "Send test email (requires SMTP configured on backend)."
           },
           "response": []
         }

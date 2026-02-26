@@ -71,6 +71,27 @@ def _target_params(server_id: UUID | None, uptime_monitor_id: UUID | None) -> di
     return params
 
 
+def _resolve_owner_user_id(
+    conn: Connection,
+    *,
+    server_id: UUID | None,
+    uptime_monitor_id: UUID | None,
+) -> str | None:
+    if server_id is not None:
+        value = conn.execute(
+            text("SELECT user_id FROM servers WHERE id = :server_id"),
+            {"server_id": str(server_id)},
+        ).scalar()
+        return str(value) if value is not None else None
+    if uptime_monitor_id is not None:
+        value = conn.execute(
+            text("SELECT user_id FROM uptime_monitors WHERE id = :uptime_monitor_id"),
+            {"uptime_monitor_id": str(uptime_monitor_id)},
+        ).scalar()
+        return str(value) if value is not None else None
+    return None
+
+
 def resolve_alert_type(
     conn: Connection,
     server_id: UUID | None,
@@ -158,31 +179,22 @@ def create_alert_if_needed(
         if age_seconds < dedupe_seconds:
             return False
 
+    alert_user_id = _resolve_owner_user_id(
+        conn,
+        server_id=server_id,
+        uptime_monitor_id=uptime_monitor_id,
+    )
+
     row = conn.execute(
         text(
             """
             INSERT INTO alerts (user_id, server_id, uptime_monitor_id, type, severity, title, details)
-            VALUES (
-                CASE
-                    WHEN :server_id IS NOT NULL THEN (
-                        SELECT s.user_id FROM servers s WHERE s.id = CAST(:server_id AS uuid)
-                    )
-                    WHEN :uptime_monitor_id IS NOT NULL THEN (
-                        SELECT um.user_id FROM uptime_monitors um WHERE um.id = CAST(:uptime_monitor_id AS uuid)
-                    )
-                    ELSE NULL
-                END,
-                :server_id,
-                :uptime_monitor_id,
-                :alert_type,
-                :severity,
-                :title,
-                CAST(:details AS jsonb)
-            )
+            VALUES (:user_id, :server_id, :uptime_monitor_id, :alert_type, :severity, :title, CAST(:details AS jsonb))
             RETURNING id, user_id, server_id, uptime_monitor_id, ts, type, severity, title, details, is_resolved, resolved_at
             """
         ),
         {
+            "user_id": alert_user_id,
             "server_id": str(server_id) if server_id is not None else None,
             "uptime_monitor_id": str(uptime_monitor_id) if uptime_monitor_id is not None else None,
             "alert_type": alert_type,
