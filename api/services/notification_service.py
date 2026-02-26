@@ -39,8 +39,83 @@ def _parse_time(value: Any) -> str:
     if value is None:
         return "-"
     if isinstance(value, datetime):
-        return value.astimezone(timezone.utc).isoformat()
+        return value.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     return str(value)
+
+
+def _esc(value: Any) -> str:
+    return str(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _humanize_alert_type(value: str) -> str:
+    return value.replace("_", " ").replace("-", " ").title()
+
+
+def _severity_color(severity: Any) -> str:
+    s = str(severity or "").lower()
+    if s == "critical":
+        return "#b91c1c"
+    if s == "high":
+        return "#c2410c"
+    if s == "medium":
+        return "#92400e"
+    return "#374151"
+
+
+def _target_name(conn: Connection, alert: dict[str, Any]) -> tuple[str, str]:
+    server_id = alert.get("server_id")
+    if server_id:
+        row = conn.execute(
+            text("SELECT name FROM servers WHERE id = :id"),
+            {"id": str(server_id)},
+        ).mappings().first()
+        return ("Server", str(row["name"]) if row else str(server_id))
+
+    monitor_id = alert.get("uptime_monitor_id")
+    if monitor_id:
+        row = conn.execute(
+            text("SELECT name FROM uptime_monitors WHERE id = :id"),
+            {"id": str(monitor_id)},
+        ).mappings().first()
+        return ("Uptime Monitor", str(row["name"]) if row else str(monitor_id))
+
+    return ("Target", "-")
+
+
+def _metric_summary_html(alert_type: str, details: dict[str, Any]) -> str:
+    value_key_map = {
+        "disk_high": ("disk_percent", "Disk Usage"),
+        "cpu_high": ("cpu_percent", "CPU Usage"),
+        "ram_high": ("ram_percent", "RAM Usage"),
+        "UPTIME_SLOW": ("response_time_ms", "Response Time (ms)"),
+    }
+    item = value_key_map.get(alert_type)
+    if not item:
+        return ""
+    key, label = item
+    value = details.get(key)
+    if value is None:
+        return ""
+
+    threshold = details.get("threshold") or details.get("threshold_ms")
+    suffix = "%" if "percent" in key else " ms"
+    try:
+        numeric = float(value)
+        display_value = f"{numeric:.1f}{suffix}" if suffix == "%" else f"{int(numeric)}{suffix}"
+    except Exception:
+        display_value = f"{value}{suffix}"
+
+    threshold_text = ""
+    if threshold is not None:
+        threshold_text = f"<div style=\"font-size:12px;color:#6b7280;margin-top:4px\">Threshold: {_esc(threshold)}{suffix if suffix == '%' else ' ms'}</div>"
+
+    return (
+        "<div style=\"margin:14px 0 18px 0;padding:14px 16px;border:1px solid #e5e7eb;border-radius:12px;background:#f9fafb\">"
+        f"<div style=\"font-size:12px;color:#6b7280;letter-spacing:.04em;text-transform:uppercase\">{_esc(label)}</div>"
+        f"<div style=\"font-size:28px;font-weight:700;color:#111827;line-height:1.2\">{_esc(display_value)}</div>"
+        f"{threshold_text}"
+        "</div>"
+    )
 
 
 def _is_valid_email(email: str) -> bool:
@@ -174,9 +249,13 @@ def _send_alert_notification(conn: Connection, *, recipient: dict[str, Any], ale
 
     settings = get_settings()
     alert_type = str(alert.get("type") or "")
+    target_label, target_value = _target_name(conn, alert)
     subject_prefix = "[Recovered]" if is_recovery else "[Alert]"
-    subject = f"{subject_prefix} {alert_type} ({alert.get('severity')})"
+    subject = f"{subject_prefix} {_humanize_alert_type(alert_type)} - {target_value}"
     details = _normalize_alert_details(alert.get("details"))
+    details_pretty = json.dumps(details, indent=2, ensure_ascii=False, default=str)
+    severity_color = _severity_color(alert.get("severity"))
+    metric_box = _metric_summary_html(alert_type, details)
 
     text_body = "\n".join(
         [
@@ -186,6 +265,7 @@ def _send_alert_notification(conn: Connection, *, recipient: dict[str, Any], ale
             f"Type: {alert_type}",
             f"Severity: {alert.get('severity')}",
             f"Title: {alert.get('title')}",
+            f"{target_label}: {target_value}",
             f"Created At: {_parse_time(alert.get('ts'))}",
             f"Resolved: {bool(alert.get('is_resolved'))}",
             f"Resolved At: {_parse_time(alert.get('resolved_at'))}",
@@ -197,18 +277,31 @@ def _send_alert_notification(conn: Connection, *, recipient: dict[str, Any], ale
     )
 
     html_body = (
-        "<html><body>"
-        f"<h3>AI DevOps Monitor Notification</h3>"
-        f"<p><strong>Type:</strong> {alert_type}<br>"
-        f"<strong>Severity:</strong> {alert.get('severity')}<br>"
-        f"<strong>Title:</strong> {alert.get('title')}<br>"
-        f"<strong>Created At:</strong> {_parse_time(alert.get('ts'))}<br>"
-        f"<strong>Resolved:</strong> {bool(alert.get('is_resolved'))}<br>"
-        f"<strong>Resolved At:</strong> {_parse_time(alert.get('resolved_at'))}<br>"
-        f"<strong>Server ID:</strong> {alert.get('server_id') or '-'}<br>"
-        f"<strong>Uptime Monitor ID:</strong> {alert.get('uptime_monitor_id') or '-'}<br>"
-        f"<strong>Details:</strong> <pre>{details}</pre></p>"
-        "</body></html>"
+        "<html><body style=\"margin:0;padding:24px;background:#f3f4f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#111827\">"
+        "<div style=\"max-width:720px;margin:0 auto\">"
+        "<div style=\"background:#ffffff;border:1px solid #e5e7eb;border-radius:16px;overflow:hidden\">"
+        f"<div style=\"padding:18px 20px;background:{severity_color};color:#ffffff\">"
+        f"<div style=\"font-size:12px;opacity:.9;letter-spacing:.06em;text-transform:uppercase\">AI DevOps Monitor</div>"
+        f"<div style=\"font-size:22px;font-weight:700;margin-top:4px\">{_esc(_humanize_alert_type(alert_type))}</div>"
+        f"<div style=\"font-size:13px;opacity:.95;margin-top:4px\">{_esc(target_label)}: {_esc(target_value)}</div>"
+        "</div>"
+        "<div style=\"padding:20px\">"
+        f"<div style=\"font-size:18px;font-weight:700;color:#111827;margin-bottom:8px\">{_esc(alert.get('title') or '')}</div>"
+        f"<div style=\"font-size:13px;color:#6b7280;margin-bottom:10px\">Severity: <strong style=\"color:{severity_color}\">{_esc(alert.get('severity') or '')}</strong></div>"
+        f"{metric_box}"
+        "<table style=\"width:100%;border-collapse:collapse;font-size:14px\">"
+        f"<tr><td style=\"padding:8px 0;color:#6b7280;width:180px\">Created At</td><td style=\"padding:8px 0\">{_esc(_parse_time(alert.get('ts')))}</td></tr>"
+        f"<tr><td style=\"padding:8px 0;color:#6b7280\">Resolved</td><td style=\"padding:8px 0\">{_esc(bool(alert.get('is_resolved')))}</td></tr>"
+        f"<tr><td style=\"padding:8px 0;color:#6b7280\">Resolved At</td><td style=\"padding:8px 0\">{_esc(_parse_time(alert.get('resolved_at')))}</td></tr>"
+        f"<tr><td style=\"padding:8px 0;color:#6b7280\">Server ID</td><td style=\"padding:8px 0;font-family:ui-monospace,Menlo,monospace\">{_esc(alert.get('server_id') or '-')}</td></tr>"
+        f"<tr><td style=\"padding:8px 0;color:#6b7280\">Uptime Monitor ID</td><td style=\"padding:8px 0;font-family:ui-monospace,Menlo,monospace\">{_esc(alert.get('uptime_monitor_id') or '-')}</td></tr>"
+        "</table>"
+        "<div style=\"margin-top:16px\">"
+        "<div style=\"font-size:12px;color:#6b7280;letter-spacing:.04em;text-transform:uppercase;margin-bottom:6px\">Alert Details</div>"
+        f"<pre style=\"margin:0;padding:12px;border-radius:10px;background:#f9fafb;border:1px solid #e5e7eb;white-space:pre-wrap;word-break:break-word;font-size:12px;line-height:1.5\">{_esc(details_pretty)}</pre>"
+        "</div>"
+        f"<div style=\"margin-top:16px;font-size:12px;color:#6b7280\">API: {_esc(settings.api_base_url)}</div>"
+        "</div></div></div></body></html>"
     )
 
     try:

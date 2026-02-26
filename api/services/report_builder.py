@@ -12,8 +12,16 @@ def _fmt_dt(value: Any) -> str:
     if value is None:
         return "-"
     if isinstance(value, datetime):
-        return value.astimezone(timezone.utc).isoformat()
+        return value.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     return str(value)
+
+
+def _esc(v: Any) -> str:
+    return str(v).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _humanize_alert_type(value: Any) -> str:
+    return str(value).replace("_", " ").replace("-", " ").title()
 
 
 def build_daily_report(
@@ -148,45 +156,103 @@ def build_daily_report(
 
     text_body = "\n".join(text_lines)
 
-    def esc(v: Any) -> str:
-        return str(v).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    def _table(headers: list[str], rows_html: list[str], empty_html: str) -> str:
+        if not rows_html:
+            return empty_html
+        head = "".join(
+            f"<th style=\"text-align:left;padding:10px 12px;border-bottom:1px solid #e5e7eb;font-size:12px;color:#6b7280;text-transform:uppercase;letter-spacing:.04em\">{_esc(h)}</th>"
+            for h in headers
+        )
+        body = "".join(rows_html)
+        return (
+            "<table style=\"width:100%;border-collapse:collapse;background:#fff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden\">"
+            f"<thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>"
+        )
+
+    server_rows = [
+        (
+            "<tr>"
+            f"<td style=\"padding:10px 12px;border-bottom:1px solid #f3f4f6\">{_esc(r['name'])}</td>"
+            f"<td style=\"padding:10px 12px;border-bottom:1px solid #f3f4f6\">{_esc(r['status'])}</td>"
+            f"<td style=\"padding:10px 12px;border-bottom:1px solid #f3f4f6\">{_esc(_fmt_dt(r['last_seen_at']))}</td>"
+            "</tr>"
+        )
+        for r in servers
+    ]
+    alert_count_rows = [
+        (
+            "<tr>"
+            f"<td style=\"padding:10px 12px;border-bottom:1px solid #f3f4f6\">{_esc(r['severity'])}</td>"
+            f"<td style=\"padding:10px 12px;border-bottom:1px solid #f3f4f6\">{_esc(_humanize_alert_type(r['type']))}</td>"
+            f"<td style=\"padding:10px 12px;border-bottom:1px solid #f3f4f6\">{_esc(r['count'])}</td>"
+            "</tr>"
+        )
+        for r in alert_counts
+    ]
+    latest_alert_rows = []
+    for r in latest_alerts:
+        target = r["server_id"] or r["uptime_monitor_id"] or "-"
+        latest_alert_rows.append(
+            "<tr>"
+            f"<td style=\"padding:10px 12px;border-bottom:1px solid #f3f4f6\">{_esc(_fmt_dt(r['ts']))}</td>"
+            f"<td style=\"padding:10px 12px;border-bottom:1px solid #f3f4f6\">{_esc(r['severity'])}</td>"
+            f"<td style=\"padding:10px 12px;border-bottom:1px solid #f3f4f6\">{_esc(_humanize_alert_type(r['type']))}</td>"
+            f"<td style=\"padding:10px 12px;border-bottom:1px solid #f3f4f6\">{_esc(target)}</td>"
+            f"<td style=\"padding:10px 12px;border-bottom:1px solid #f3f4f6\">{_esc(r['title'])}</td>"
+            "</tr>"
+        )
+    metric_rows = [
+        (
+            "<tr>"
+            f"<td style=\"padding:10px 12px;border-bottom:1px solid #f3f4f6\">{_esc(r['name'])}</td>"
+            f"<td style=\"padding:10px 12px;border-bottom:1px solid #f3f4f6\">{_esc(r['max_cpu_percent'] or '-')}</td>"
+            f"<td style=\"padding:10px 12px;border-bottom:1px solid #f3f4f6\">{_esc(r['max_ram_percent'] or '-')}</td>"
+            f"<td style=\"padding:10px 12px;border-bottom:1px solid #f3f4f6\">{_esc(r['max_disk_percent'] or '-')}</td>"
+            "</tr>"
+        )
+        for r in worst_metrics
+    ]
+    uptime_rows = [
+        (
+            "<tr>"
+            f"<td style=\"padding:10px 12px;border-bottom:1px solid #f3f4f6\">{_esc(r['name'])}</td>"
+            f"<td style=\"padding:10px 12px;border-bottom:1px solid #f3f4f6\">{_esc(r['last_status'])}</td>"
+            f"<td style=\"padding:10px 12px;border-bottom:1px solid #f3f4f6\">{_esc(r['up_checks'])}</td>"
+            f"<td style=\"padding:10px 12px;border-bottom:1px solid #f3f4f6\">{_esc(r['down_checks'])}</td>"
+            f"<td style=\"padding:10px 12px;border-bottom:1px solid #f3f4f6\">{_esc(_fmt_dt(r['last_checked_at']))}</td>"
+            "</tr>"
+        )
+        for r in uptime_summary
+    ]
 
     html = [
-        "<html><body>",
-        f"<h2>AI DevOps Monitor Daily Report</h2><p><strong>Recipient:</strong> {esc(email)}<br><strong>Window:</strong> {esc(since.isoformat())} to {esc(now.isoformat())}</p>",
-        "<h3>Servers</h3><ul>",
+        "<html><body style=\"margin:0;padding:24px;background:#f3f4f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#111827\">",
+        "<div style=\"max-width:980px;margin:0 auto\">",
+        "<div style=\"background:#111827;color:#ffffff;border-radius:16px;padding:20px 24px;margin-bottom:16px\">",
+        "<div style=\"font-size:12px;opacity:.85;letter-spacing:.06em;text-transform:uppercase\">AI DevOps Monitor</div>",
+        "<div style=\"font-size:28px;font-weight:700;margin-top:6px\">Daily Report</div>",
+        f"<div style=\"font-size:13px;opacity:.9;margin-top:6px\">Recipient: {_esc(email)} | Window: {_esc(_fmt_dt(since))} to {_esc(_fmt_dt(now))}</div>",
+        "</div>",
+        "<div style=\"display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:16px\">",
+        f"<div style=\"background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:14px\"><div style=\"font-size:12px;color:#6b7280\">Servers</div><div style=\"font-size:24px;font-weight:700\">{len(servers)}</div></div>",
+        f"<div style=\"background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:14px\"><div style=\"font-size:12px;color:#6b7280\">Alerts (24h)</div><div style=\"font-size:24px;font-weight:700\">{sum(int(r['count']) for r in alert_counts) if alert_counts else 0}</div></div>",
+        f"<div style=\"background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:14px\"><div style=\"font-size:12px;color:#6b7280\">Uptime Monitors</div><div style=\"font-size:24px;font-weight:700\">{len(uptime_summary)}</div></div>",
+        f"<div style=\"background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:14px\"><div style=\"font-size:12px;color:#6b7280\">Generated</div><div style=\"font-size:18px;font-weight:700\">{_esc(_fmt_dt(now))}</div></div>",
+        "</div>",
     ]
-    if not servers:
-        html.append("<li>No servers</li>")
-    for row in servers:
-        html.append(f"<li>{esc(row['name'])}: {esc(row['status'])} (last_seen={esc(_fmt_dt(row['last_seen_at']))})</li>")
-    html.append("</ul><h3>Alert Counts (last 24h)</h3><ul>")
-    if not alert_counts:
-        html.append("<li>No alerts</li>")
-    for row in alert_counts:
-        html.append(f"<li>{esc(row['severity'])} / {esc(row['type'])}: {esc(row['count'])}</li>")
-    html.append("</ul><h3>Latest Alerts (top 10)</h3><ul>")
-    if not latest_alerts:
-        html.append("<li>No alerts in last 24h</li>")
-    for row in latest_alerts:
-        target = row["server_id"] or row["uptime_monitor_id"] or "-"
-        html.append(
-            f"<li>[{esc(_fmt_dt(row['ts']))}] {esc(row['severity'])} {esc(row['type'])} target={esc(target)} resolved={esc(row['is_resolved'])} title={esc(row['title'])}</li>"
-        )
-    html.append("</ul><h3>Worst Metrics (last 24h)</h3><ul>")
-    if not worst_metrics:
-        html.append("<li>No metrics</li>")
-    for row in worst_metrics:
-        html.append(
-            f"<li>{esc(row['name'])}: max_cpu={esc(row['max_cpu_percent'] or '-')} max_ram={esc(row['max_ram_percent'] or '-')} max_disk={esc(row['max_disk_percent'] or '-')}</li>"
-        )
-    html.append("</ul><h3>Uptime Summary (last 24h)</h3><ul>")
-    if not uptime_summary:
-        html.append("<li>No uptime monitors</li>")
-    for row in uptime_summary:
-        html.append(
-            f"<li>{esc(row['name'])}: last_status={esc(row['last_status'])} up_checks={esc(row['up_checks'])} down_checks={esc(row['down_checks'])} last_checked={esc(_fmt_dt(row['last_checked_at']))}</li>"
-        )
-    html.append("</ul></body></html>")
+
+    sections = [
+        ("Servers", _table(["Name", "Status", "Last Seen"], server_rows, "<div style=\"padding:12px;color:#6b7280;background:#fff;border:1px solid #e5e7eb;border-radius:12px\">No servers</div>")),
+        ("Alert Counts (Last 24h)", _table(["Severity", "Type", "Count"], alert_count_rows, "<div style=\"padding:12px;color:#6b7280;background:#fff;border:1px solid #e5e7eb;border-radius:12px\">No alerts</div>")),
+        ("Latest Alerts (Top 10)", _table(["Time", "Severity", "Type", "Target", "Title"], latest_alert_rows, "<div style=\"padding:12px;color:#6b7280;background:#fff;border:1px solid #e5e7eb;border-radius:12px\">No alerts in last 24h</div>")),
+        ("Worst Metrics (Last 24h)", _table(["Server", "Max CPU %", "Max RAM %", "Max Disk %"], metric_rows, "<div style=\"padding:12px;color:#6b7280;background:#fff;border:1px solid #e5e7eb;border-radius:12px\">No metrics</div>")),
+        ("Uptime Summary (Last 24h)", _table(["Monitor", "Last Status", "Up Checks", "Down Checks", "Last Checked"], uptime_rows, "<div style=\"padding:12px;color:#6b7280;background:#fff;border:1px solid #e5e7eb;border-radius:12px\">No uptime monitors</div>")),
+    ]
+
+    for title, section_html in sections:
+        html.append(f"<div style=\"margin:18px 0 8px 0;font-size:18px;font-weight:700\">{_esc(title)}</div>")
+        html.append(section_html)
+
+    html.append("</div></body></html>")
 
     return subject, text_body, "".join(html)
