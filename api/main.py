@@ -48,6 +48,7 @@ from .rate_limit import InMemoryRateLimiter
 from .scheduler import start_scheduler, stop_scheduler
 from .security import generate_agent_token, hash_agent_token
 from .services.auth_service import AuthenticatedUser, require_authenticated_user
+from .services.admin_notify_service import notify_server_created
 from .services.notification_service import (
     list_notification_settings as svc_list_notification_settings,
     send_test_email as svc_send_test_email,
@@ -213,6 +214,24 @@ def create_server(
         f"curl -fsSL {settings.app_public_install_sh_url} | sudo bash -s -- "
         f"--token \"{raw_token}\" --api \"{settings.api_base_url}\""
     )
+    try:
+        notify_server_created(
+            actor_email=current_user.email,
+            actor_full_name=current_user.full_name,
+            server_id=row["id"],
+            server_name=row["name"],
+        )
+    except Exception:
+        logger.exception(
+            "admin_notify_server_created_failed",
+            extra={
+                "event": "admin_notify_server_created_failed",
+                "server_id": str(row["id"]),
+                "server_name": row["name"],
+                "user_id": str(current_user.local_user_id),
+                "email": current_user.email,
+            },
+        )
     return ServerCreateResponse(
         server_id=row["id"],
         name=row["name"],

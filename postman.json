@@ -8,7 +8,7 @@
   "variable": [
     {
       "key": "baseUrl",
-      "value": "http://localhost:8000"
+      "value": "https://omcard.net"
     },
     {
       "key": "supabaseAccessToken",

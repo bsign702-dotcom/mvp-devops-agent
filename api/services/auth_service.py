@@ -14,6 +14,7 @@ from sqlalchemy import text
 from ..db import get_engine
 from ..errors import APIError
 from ..settings import get_settings
+from .admin_notify_service import notify_new_user_created
 
 logger = logging.getLogger(__name__)
 
@@ -138,7 +139,7 @@ def _upsert_local_user(supabase_user: dict[str, Any]) -> AuthenticatedUser:
                     metadata = EXCLUDED.metadata,
                     last_login_at = now(),
                     updated_at = now()
-                RETURNING id, supabase_user_id, email, full_name, metadata, is_active
+                RETURNING id, supabase_user_id, email, full_name, metadata, is_active, (xmax = 0) AS is_new_user
                 """
             ),
             {
@@ -168,6 +169,24 @@ def _upsert_local_user(supabase_user: dict[str, Any]) -> AuthenticatedUser:
             "email": row["email"],
         },
     )
+    if bool(row.get("is_new_user")):
+        try:
+            notify_new_user_created(
+                local_user_id=row["id"],
+                supabase_user_id=row["supabase_user_id"],
+                email=row["email"],
+                full_name=row.get("full_name"),
+            )
+        except Exception:
+            logger.exception(
+                "admin_notify_new_user_failed",
+                extra={
+                    "event": "admin_notify_new_user_failed",
+                    "local_user_id": str(row["id"]),
+                    "supabase_user_id": str(row["supabase_user_id"]),
+                    "email": row["email"],
+                },
+            )
 
     return AuthenticatedUser(
         local_user_id=row["id"],

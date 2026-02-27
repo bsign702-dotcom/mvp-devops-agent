@@ -41,6 +41,7 @@ services:
       SUPABASE_URL: ${SUPABASE_URL:-}
       SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY:-}
       SUPABASE_AUTH_TIMEOUT_SEC: ${SUPABASE_AUTH_TIMEOUT_SEC:-10}
+      ADMIN_NOTIFY_EMAILS: ${ADMIN_NOTIFY_EMAILS:-sautma223@gmail.com}
     ports:
       - "8000:8000"
     restart: unless-stopped

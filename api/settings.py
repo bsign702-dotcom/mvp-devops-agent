@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     supabase_url: str | None = Field(default=None, alias="SUPABASE_URL")
     supabase_anon_key: str | None = Field(default=None, alias="SUPABASE_ANON_KEY")
     supabase_auth_timeout_sec: int = Field(10, alias="SUPABASE_AUTH_TIMEOUT_SEC")
+    admin_notify_emails: str = Field("", alias="ADMIN_NOTIFY_EMAILS")
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
