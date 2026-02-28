@@ -11,6 +11,9 @@ RUN apt-get update \
 
 RUN pip install --no-cache-dir psutil requests
 
+# Fail fast at build-time if Docker CLI is not present in the image.
+RUN command -v docker && docker --version
+
 COPY agent/agent.py /app/agent.py
 
 ENTRYPOINT ["python", "/app/agent.py"]
