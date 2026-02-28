@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-AGENT_IMAGE="${AGENT_IMAGE:-bsign/devops-agent:latest}"
+DEFAULT_AGENT_IMAGE="bsign/devops-agent:latest"
+AGENT_IMAGE="${AGENT_IMAGE:-$DEFAULT_AGENT_IMAGE}"
 CONTAINER_NAME="${AGENT_NAME:-devops-agent}"
 INTERVAL_SEC="${INTERVAL_SEC:-15}"
 SYSTEMD_UNITS="${SYSTEMD_UNITS:-nginx,ssh,docker}"
@@ -9,6 +10,12 @@ AGENT_TAGS="${AGENT_TAGS:-}"
 TOKEN=""
 API=""
 DOCKER_SOCK_PATH="${DOCKER_SOCK_PATH:-}"
+IMAGE_PINNED=0
+
+# If AGENT_IMAGE was provided via env (different from default), keep it and do not override from API.
+if [[ "$AGENT_IMAGE" != "$DEFAULT_AGENT_IMAGE" ]]; then
+  IMAGE_PINNED=1
+fi
 
 usage() {
   cat <<USAGE
@@ -66,6 +73,7 @@ parse_args() {
         ;;
       --image)
         AGENT_IMAGE="${2:-}"
+        IMAGE_PINNED=1
         shift 2
         ;;
       -h|--help)
@@ -90,6 +98,9 @@ parse_args() {
 }
 
 fetch_agent_image_from_api() {
+  if [[ "$IMAGE_PINNED" -eq 1 ]]; then
+    return 0
+  fi
   local response
   local discovered
   response="$(curl -fsS -H "Authorization: Bearer $TOKEN" "$API/v1/agent/install-config" 2>/dev/null || true)"
