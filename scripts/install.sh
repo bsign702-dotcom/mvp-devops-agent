@@ -254,8 +254,8 @@ health_check() {
 verify_agent_runtime_requirements() {
   echo "Validating agent runtime requirements..."
 
-  if ! docker exec "$CONTAINER_NAME" sh -lc 'command -v docker >/dev/null 2>&1'; then
-    echo "ERROR: Agent image does not include docker CLI." >&2
+  if ! docker exec "$CONTAINER_NAME" sh -lc 'command -v docker >/dev/null 2>&1 || command -v docker.io >/dev/null 2>&1'; then
+    echo "ERROR: Agent image does not include docker/docker.io CLI." >&2
     echo "Rebuild image from ./agent/Dockerfile and reinstall with --image <image:tag>." >&2
     exit 1
   fi
@@ -266,7 +266,7 @@ verify_agent_runtime_requirements() {
     exit 1
   fi
 
-  if ! docker exec "$CONTAINER_NAME" sh -lc 'docker ps -a --format "{{.ID}}" >/dev/null 2>&1'; then
+  if ! docker exec "$CONTAINER_NAME" sh -lc '(docker ps -a --format "{{.ID}}" >/dev/null 2>&1) || (docker.io ps -a --format "{{.ID}}" >/dev/null 2>&1)'; then
     echo "ERROR: Agent cannot access Docker daemon via mounted socket." >&2
     echo "Verify docker socket permissions on host and rerun installer." >&2
     exit 1
