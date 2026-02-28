@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DEFAULT_AGENT_IMAGE="bsign/devops-agent:latest"
+DEFAULT_AGENT_IMAGE="devops-agent:latest"
 AGENT_IMAGE="${AGENT_IMAGE:-$DEFAULT_AGENT_IMAGE}"
 CONTAINER_NAME="${AGENT_NAME:-devops-agent}"
 INTERVAL_SEC="${INTERVAL_SEC:-15}"
@@ -251,6 +251,28 @@ health_check() {
   echo "Connected if you see HTTP 2xx in logs"
 }
 
+verify_agent_runtime_requirements() {
+  echo "Validating agent runtime requirements..."
+
+  if ! docker exec "$CONTAINER_NAME" sh -lc 'command -v docker >/dev/null 2>&1'; then
+    echo "ERROR: Agent image does not include docker CLI." >&2
+    echo "Rebuild image from ./agent/Dockerfile and reinstall with --image <image:tag>." >&2
+    exit 1
+  fi
+
+  if ! docker exec "$CONTAINER_NAME" sh -lc 'test -S /var/run/docker.sock'; then
+    echo "ERROR: /var/run/docker.sock is missing inside agent container." >&2
+    echo "Check DOCKER_SOCK_PATH and rerun installer." >&2
+    exit 1
+  fi
+
+  if ! docker exec "$CONTAINER_NAME" sh -lc 'docker ps -a --format "{{.ID}}" >/dev/null 2>&1'; then
+    echo "ERROR: Agent cannot access Docker daemon via mounted socket." >&2
+    echo "Verify docker socket permissions on host and rerun installer." >&2
+    exit 1
+  fi
+}
+
 print_troubleshooting() {
   echo
   echo "Troubleshooting commands:"
@@ -268,6 +290,7 @@ main() {
   detect_docker_socket_path
   restart_agent_container
   health_check
+  verify_agent_runtime_requirements
   print_troubleshooting
 }
 

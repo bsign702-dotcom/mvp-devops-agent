@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     llm_suggest_only: bool = Field(True, alias="LLM_SUGGEST_ONLY")
     llm_max_context_chars: int = Field(12000, alias="LLM_MAX_CONTEXT_CHARS")
     admin_notify_emails: str = Field("", alias="ADMIN_NOTIFY_EMAILS")
-    agent_default_image: str = Field("bsign/devops-agent:latest", alias="AGENT_DEFAULT_IMAGE")
+    agent_default_image: str = Field("devops-agent:latest", alias="AGENT_DEFAULT_IMAGE")
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

@@ -15,6 +15,7 @@ import psutil
 import requests
 
 _file_offsets: dict[str, int] = {}
+_docker_cli_missing_logged = False
 
 
 def log(event: str, **kwargs: Any) -> None:
@@ -148,8 +149,22 @@ def _run_command(cmd: list[str], timeout: int = 8) -> subprocess.CompletedProces
         return None
 
 
+def _docker_cli_available(*, log_once: bool = False) -> bool:
+    global _docker_cli_missing_logged
+    available = bool(shutil.which("docker"))
+    if available:
+        return True
+    if log_once and not _docker_cli_missing_logged:
+        _docker_cli_missing_logged = True
+        log("docker_cli_missing", message="docker command not found in agent container")
+    return False
+
+
 def collect_docker(interval_sec: int) -> dict[str, Any]:
     result: dict[str, Any] = {"containers": [], "events": []}
+    if not _docker_cli_available(log_once=True):
+        return result
+
     ps_proc = _run_command(["docker", "ps", "-a", "--format", "{{json .}}"], timeout=8)
     if ps_proc and ps_proc.returncode == 0:
         for line in ps_proc.stdout.splitlines():
@@ -282,6 +297,9 @@ def _collect_system_file_logs(interval_sec: int) -> list[str]:
 
 
 def collect_docker_log_lines(interval_sec: int, containers: list[dict[str, Any]]) -> list[str]:
+    if not _docker_cli_available(log_once=True):
+        return []
+
     target_containers: list[dict[str, Any]] = []
     for container in containers:
         status = str(container.get("status", "")).lower()

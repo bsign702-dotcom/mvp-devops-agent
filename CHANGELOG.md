@@ -46,4 +46,4 @@
 - `GET /v1/servers/{server_id}` only adds optional fields: `agent_capabilities`, `last_heartbeat_at`, `heartbeat_status`.
 
 ### New Env Vars
-- `AGENT_DEFAULT_IMAGE` (default: `bsign/devops-agent:latest`)
+- `AGENT_DEFAULT_IMAGE` (default: `devops-agent:latest`)
