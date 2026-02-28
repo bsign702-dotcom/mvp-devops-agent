@@ -150,7 +150,7 @@ def _run_command(cmd: list[str], timeout: int = 8) -> subprocess.CompletedProces
 
 def collect_docker(interval_sec: int) -> dict[str, Any]:
     result: dict[str, Any] = {"containers": [], "events": []}
-    ps_proc = _run_command(["docker", "ps", "-a", "--format", "{{json .}}"], timeout=5)
+    ps_proc = _run_command(["docker", "ps", "-a", "--format", "{{json .}}"], timeout=8)
     if ps_proc and ps_proc.returncode == 0:
         for line in ps_proc.stdout.splitlines():
             line = line.strip()
@@ -168,6 +168,36 @@ def collect_docker(interval_sec: int) -> dict[str, Any]:
                     "status": row.get("Status", ""),
                 }
             )
+    else:
+        # Fallback for environments where {{json .}} format isn't supported by docker CLI.
+        fallback_proc = _run_command(
+            ["docker", "ps", "-a", "--format", "{{.ID}}\t{{.Image}}\t{{.Names}}\t{{.Status}}"],
+            timeout=8,
+        )
+        if fallback_proc and fallback_proc.returncode == 0:
+            for line in fallback_proc.stdout.splitlines():
+                raw = line.strip()
+                if not raw:
+                    continue
+                parts = raw.split("\t", 3)
+                if len(parts) < 4:
+                    continue
+                result["containers"].append(
+                    {
+                        "id": parts[0],
+                        "image": parts[1],
+                        "name": parts[2],
+                        "status": parts[3],
+                    }
+                )
+        else:
+            stderr = ""
+            if ps_proc:
+                stderr = (ps_proc.stderr or "").strip()
+            elif fallback_proc:
+                stderr = (fallback_proc.stderr or "").strip()
+            if stderr:
+                log("docker_ps_failed", error=stderr[:500])
 
     end_ts = int(time.time())
     start_ts = max(0, end_ts - int(interval_sec))
@@ -182,7 +212,7 @@ def collect_docker(interval_sec: int) -> dict[str, Any]:
             "--format",
             "{{json .}}",
         ],
-        timeout=5,
+        timeout=8,
     )
     if events_proc and events_proc.returncode == 0:
         for line in events_proc.stdout.splitlines():
@@ -193,6 +223,8 @@ def collect_docker(interval_sec: int) -> dict[str, Any]:
                 result["events"].append(json.loads(line))
             except json.JSONDecodeError:
                 result["events"].append({"raw": line})
+    elif events_proc and events_proc.stderr:
+        log("docker_events_failed", error=(events_proc.stderr or "").strip()[:500])
     return result
 
 

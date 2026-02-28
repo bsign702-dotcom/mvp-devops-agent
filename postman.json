@@ -49,6 +49,22 @@
     {
       "key": "chatSessionId",
       "value": ""
+    },
+    {
+      "key": "stackId",
+      "value": "docker-nginx-basic"
+    },
+    {
+      "key": "templateId",
+      "value": "fastapi-prod"
+    },
+    {
+      "key": "provisionPlanId",
+      "value": ""
+    },
+    {
+      "key": "preflightRunId",
+      "value": ""
     }
   ],
   "item": [
@@ -84,7 +100,7 @@
             "install.sh"
           ]
         },
-        "description": "Public installer script served by the backend. Use with: `curl -fsSL {{baseUrl}}/install.sh | sudo bash -s -- --token \"<agent_token>\" --api \"{{baseUrl}}\"`."
+        "description": "Public installer script served by the backend. Example: `curl -fsSL {{baseUrl}}/install.sh | sudo bash -s -- --token \"<agent_token>\" --api \"{{baseUrl}}\" --name \"{{serverName}}\" --units nginx,ssh,docker --interval 15 --tags env=prod,role=web`."
       },
       "response": []
     },
@@ -220,6 +236,16 @@
                   "  pm.expect(data).to.have.property('recent_logs');",
                   "  pm.expect(data.docker_containers).to.be.an('array');",
                   "  pm.expect(data.recent_logs).to.be.an('array');",
+                  "});",
+                  "",
+                  "pm.test('Has agent capabilities and heartbeat fields', function () {",
+                  "  pm.expect(data).to.have.property('agent_capabilities');",
+                  "  pm.expect(data).to.have.property('last_heartbeat_at');",
+                  "  pm.expect(data).to.have.property('heartbeat_status');",
+                  "  pm.expect(data.agent_capabilities).to.be.an('object');",
+                  "  if (data.heartbeat_status !== null && data.heartbeat_status !== undefined) {",
+                  "    pm.expect(data.heartbeat_status).to.be.a('string');",
+                  "  }",
                   "});",
                   "",
                   "if (Array.isArray(data.recent_logs) && data.recent_logs.length > 0) {",
@@ -786,6 +812,574 @@
               ]
             },
             "description": "Fetch full message timeline for the chat session."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Stacks",
+      "item": [
+        {
+          "name": "List Stacks",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code >= 200 && pm.response.code < 300) {",
+                  "  const data = pm.response.json();",
+                  "  if (Array.isArray(data) && data.length > 0 && data[0].id) {",
+                  "    pm.collectionVariables.set('stackId', data[0].id);",
+                  "  }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{supabaseAccessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/stacks",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "stacks"
+              ]
+            },
+            "description": "List available stack/recipe catalog."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Stack Details",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{supabaseAccessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/stacks/{{stackId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "stacks",
+                "{{stackId}}"
+              ]
+            },
+            "description": "Get one stack definition including required inputs and required agent capabilities."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Provisioning",
+      "item": [
+        {
+          "name": "Create Provision Plan",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code >= 200 && pm.response.code < 300) {",
+                  "  const data = pm.response.json();",
+                  "  if (data.plan_id) pm.collectionVariables.set('provisionPlanId', data.plan_id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{supabaseAccessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"stack_id\": \"{{stackId}}\",\n  \"inputs\": {\n    \"domain\": \"app.example.com\",\n    \"email\": \"ops@example.com\",\n    \"app_port\": 8000,\n    \"repo_url\": \"https://github.com/example/app\",\n    \"env_vars\": {\n      \"APP_ENV\": \"production\"\n    }\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/servers/{{serverId}}/provision-plan",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "servers",
+                "{{serverId}}",
+                "provision-plan"
+              ]
+            },
+            "description": "Generate a non-executed provisioning plan (files + commands + notes) and store `provisionPlanId`."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Provision Plan",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{supabaseAccessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/provision-plans/{{provisionPlanId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "provision-plans",
+                "{{provisionPlanId}}"
+              ]
+            },
+            "description": "Fetch previously generated provision plan by id."
+          },
+          "response": []
+        },
+        {
+          "name": "Create Preflight Checklist",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code >= 200 && pm.response.code < 300) {",
+                  "  const data = pm.response.json();",
+                  "  if (data.run_id) pm.collectionVariables.set('preflightRunId', data.run_id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{supabaseAccessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"stack_id\": \"{{stackId}}\",\n  \"inputs\": {\n    \"domain\": \"app.example.com\",\n    \"app_port\": 8000\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/servers/{{serverId}}/preflight",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "servers",
+                "{{serverId}}",
+                "preflight"
+              ]
+            },
+            "description": "Generate preflight checklist commands and store `preflightRunId`."
+          },
+          "response": []
+        },
+        {
+          "name": "Submit Preflight Results",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{supabaseAccessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"run_id\": \"{{preflightRunId}}\",\n  \"results\": {\n    \"docker_version\": \"Docker version 28.4.0, build d8eb465\",\n    \"nginx_test\": \"syntax is ok\\n test is successful\",\n    \"disk_free\": \"Filesystem 50%\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/servers/{{serverId}}/preflight/results",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "servers",
+                "{{serverId}}",
+                "preflight",
+                "results"
+              ]
+            },
+            "description": "Submit preflight outputs for completeness check."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Templates",
+      "item": [
+        {
+          "name": "List Project Templates",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code >= 200 && pm.response.code < 300) {",
+                  "  const data = pm.response.json();",
+                  "  if (Array.isArray(data) && data.length > 0 && data[0].id) {",
+                  "    pm.collectionVariables.set('templateId', data[0].id);",
+                  "  }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{supabaseAccessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/templates",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "templates"
+              ]
+            },
+            "description": "List deployment templates (FastAPI, Node/Next.js, static, etc.)."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Project Template",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{supabaseAccessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/templates/{{templateId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "templates",
+                "{{templateId}}"
+              ]
+            },
+            "description": "Get template details including compose, nginx_conf and env template."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Validation",
+      "item": [
+        {
+          "name": "Validate Docker Compose",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{supabaseAccessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"yaml\": \"services:\\n  app:\\n    image: ghcr.io/example/app:latest\\n    ports:\\n      - \\\"8080:8080\\\"\\n  db:\\n    image: postgres:16\\n\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/validate/docker-compose",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "validate",
+                "docker-compose"
+              ]
+            },
+            "description": "Lint docker-compose YAML for conflicts and best-practice warnings."
+          },
+          "response": []
+        },
+        {
+          "name": "Validate Nginx Config",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{supabaseAccessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conf\": \"server {\\n  listen 80;\\n  server_name app.example.com;\\n  location / {\\n    proxy_pass http://127.0.0.1:8000;\\n    proxy_set_header Host $host;\\n    proxy_set_header Upgrade $http_upgrade;\\n    proxy_set_header Connection \\\"upgrade\\\";\\n    proxy_connect_timeout 10s;\\n    proxy_read_timeout 60s;\\n    proxy_send_timeout 60s;\\n  }\\n}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/validate/nginx",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "validate",
+                "nginx"
+              ]
+            },
+            "description": "Lint nginx config for missing server_name, proxy headers and timeouts."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Observability",
+      "item": [
+        {
+          "name": "Search Structured Logs",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{supabaseAccessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/servers/{{serverId}}/logs?source=nginx&level=error&q=connect&limit=50",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "servers",
+                "{{serverId}}",
+                "logs"
+              ],
+              "query": [
+                {
+                  "key": "source",
+                  "value": "nginx"
+                },
+                {
+                  "key": "level",
+                  "value": "error"
+                },
+                {
+                  "key": "q",
+                  "value": "connect"
+                },
+                {
+                  "key": "limit",
+                  "value": "50"
+                }
+              ]
+            },
+            "description": "Search normalized logs with filters. Response includes aggregates by fingerprint/source/service."
+          },
+          "response": []
+        },
+        {
+          "name": "Metrics History",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{supabaseAccessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/servers/{{serverId}}/metrics?bucket=5m",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "servers",
+                "{{serverId}}",
+                "metrics"
+              ],
+              "query": [
+                {
+                  "key": "bucket",
+                  "value": "5m"
+                }
+              ]
+            },
+            "description": "Get bucketed metrics history (1m, 5m, 1h)."
+          },
+          "response": []
+        },
+        {
+          "name": "Events Timeline",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{supabaseAccessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/servers/{{serverId}}/timeline",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "servers",
+                "{{serverId}}",
+                "timeline"
+              ]
+            },
+            "description": "Unified chronological timeline (alerts + docker events + important logs)."
+          },
+          "response": []
+        },
+        {
+          "name": "Troubleshooting Packet",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{supabaseAccessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/servers/{{serverId}}/troubleshooting-packet",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "servers",
+                "{{serverId}}",
+                "troubleshooting-packet"
+              ]
+            },
+            "description": "Fetch context packet used by assistant: identity, alerts, logs, events, trends and recent plans."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Agent Diagnostics (Agent Token)",
+      "item": [
+        {
+          "name": "Get Agent Install Config",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{agentToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/agent/install-config",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "agent",
+                "install-config"
+              ]
+            },
+            "description": "Resolve runtime install config for this agent token (server_id + agent_image)."
+          },
+          "response": []
+        },
+        {
+          "name": "Agent Self Check",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{agentToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"docker_version\": \"28.4.0\",\n  \"systemd_available\": true,\n  \"journalctl_access\": true,\n  \"nginx_paths\": [\n    \"/var/log/nginx/access.log\",\n    \"/var/log/nginx/error.log\"\n  ],\n  \"supports_docker\": true,\n  \"supports_nginx_logs\": true,\n  \"supports_systemd_logs\": true,\n  \"supports_journalctl_logs\": true,\n  \"tags\": {\n    \"env\": \"prod\",\n    \"role\": \"web\"\n  },\n  \"metadata\": {\n    \"collector_version\": \"1.0.0\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/agent/self-check",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "agent",
+                "self-check"
+              ]
+            },
+            "description": "Publish agent capabilities and environment checks to backend."
           },
           "response": []
         }

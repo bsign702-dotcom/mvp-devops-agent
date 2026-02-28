@@ -81,7 +81,7 @@ from .services.chat_service import (
     list_chat_messages as svc_list_chat_messages,
     list_chat_sessions as svc_list_chat_sessions,
 )
-from .services.foundation_service import (
+from .services.platform_service import (
     build_log_fingerprint,
     build_troubleshooting_packet,
     create_preflight_run,

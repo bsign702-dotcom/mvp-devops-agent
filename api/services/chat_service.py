@@ -9,7 +9,7 @@ from sqlalchemy import text
 from ..db import get_engine
 from ..errors import APIError
 from ..settings import get_settings
-from .foundation_service import build_chat_context_packet
+from .platform_service import build_chat_context_packet
 from .llm_provider import generate_assistant_reply
 
 

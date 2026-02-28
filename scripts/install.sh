@@ -8,6 +8,7 @@ SYSTEMD_UNITS="${SYSTEMD_UNITS:-nginx,ssh,docker}"
 AGENT_TAGS="${AGENT_TAGS:-}"
 TOKEN=""
 API=""
+DOCKER_SOCK_PATH="${DOCKER_SOCK_PATH:-}"
 
 usage() {
   cat <<USAGE
@@ -144,6 +145,48 @@ install_docker_if_needed() {
   fi
 }
 
+detect_docker_socket_path() {
+  if [[ -n "$DOCKER_SOCK_PATH" ]]; then
+    if [[ ! -S "$DOCKER_SOCK_PATH" ]]; then
+      echo "Provided DOCKER_SOCK_PATH is not a unix socket: $DOCKER_SOCK_PATH" >&2
+      exit 1
+    fi
+    return 0
+  fi
+
+  # 1) Use DOCKER_HOST when it points to a unix socket.
+  if [[ "${DOCKER_HOST:-}" == unix://* ]]; then
+    local host_sock="${DOCKER_HOST#unix://}"
+    if [[ -S "$host_sock" ]]; then
+      DOCKER_SOCK_PATH="$host_sock"
+      return 0
+    fi
+  fi
+
+  # 2) Common rootful socket path.
+  if [[ -S /var/run/docker.sock ]]; then
+    DOCKER_SOCK_PATH="/var/run/docker.sock"
+    return 0
+  fi
+
+  # 3) Rootless docker socket paths.
+  if [[ -n "${SUDO_UID:-}" ]]; then
+    local sudo_user_sock="/run/user/${SUDO_UID}/docker.sock"
+    if [[ -S "$sudo_user_sock" ]]; then
+      DOCKER_SOCK_PATH="$sudo_user_sock"
+      return 0
+    fi
+  fi
+  if [[ -S /run/user/1000/docker.sock ]]; then
+    DOCKER_SOCK_PATH="/run/user/1000/docker.sock"
+    return 0
+  fi
+
+  echo "Could not detect Docker unix socket path." >&2
+  echo "Set DOCKER_SOCK_PATH manually, e.g. /var/run/docker.sock or /run/user/<uid>/docker.sock" >&2
+  exit 1
+}
+
 restart_agent_container() {
   if docker ps -a --format '{{.Names}}' | grep -Fxq "$CONTAINER_NAME"; then
     echo "Replacing existing container: $CONTAINER_NAME"
@@ -163,6 +206,7 @@ restart_agent_container() {
   fi
 
   echo "Starting agent container..."
+  echo "Using Docker socket: $DOCKER_SOCK_PATH"
   local run_args=(
     -d
     --name "$CONTAINER_NAME"
@@ -172,7 +216,7 @@ restart_agent_container() {
     -e INTERVAL_SEC="$INTERVAL_SEC"
     -e SYSTEMD_UNITS="$SYSTEMD_UNITS"
     -e AGENT_TAGS="$AGENT_TAGS"
-    -v /var/run/docker.sock:/var/run/docker.sock
+    -v "$DOCKER_SOCK_PATH:/var/run/docker.sock"
     -v /var/log:/var/log:ro
   )
   if [[ -d /etc/nginx ]]; then
@@ -210,6 +254,7 @@ main() {
   warn_if_localhost_api
   fetch_agent_image_from_api
   install_docker_if_needed
+  detect_docker_socket_path
   restart_agent_container
   health_check
   print_troubleshooting

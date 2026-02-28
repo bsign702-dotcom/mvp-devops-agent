@@ -1,4 +1,4 @@
-from api.services.foundation_service import (
+from api.services.platform_service import (
     build_log_fingerprint,
     lint_compose_yaml,
     lint_nginx_conf,
