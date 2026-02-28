@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-AGENT_IMAGE="${AGENT_IMAGE:-yoursaas/devops-agent:latest}"
+AGENT_IMAGE="${AGENT_IMAGE:-bsign/devops-agent:latest}"
 CONTAINER_NAME="devops-agent"
 INTERVAL_SEC="${INTERVAL_SEC:-15}"
 SYSTEMD_UNITS="${SYSTEMD_UNITS:-nginx,ssh}"

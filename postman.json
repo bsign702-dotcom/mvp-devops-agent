@@ -2,7 +2,7 @@
   "info": {
     "name": "AI DevOps Monitor MVP API",
     "_postman_id": "7f5e1d70-0b66-4f65-9f4b-9e4c8b43b1aa",
-    "description": "Postman collection for AI DevOps Monitor backend (FastAPI + PostgreSQL) with Supabase auth, servers, ingest, alerts, uptime monitors, notifications, and suggest-only LLM chat troubleshooting.",
+    "description": "Postman collection for AI DevOps Monitor backend (FastAPI + PostgreSQL) with Supabase auth, servers, ingest, alerts, uptime monitors, notifications, suggest-only LLM chat troubleshooting, and server ops visibility (IP/domains/nginx/docker logs).",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -176,6 +176,47 @@
         },
         {
           "name": "Get Server Details",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "const data = pm.response.json();",
+                  "",
+                  "pm.test('Has ops identity fields', function () {",
+                  "  pm.expect(data).to.have.property('primary_ip');",
+                  "  pm.expect(data).to.have.property('ip_addresses');",
+                  "  pm.expect(data).to.have.property('domains');",
+                  "  pm.expect(data.ip_addresses).to.be.an('array');",
+                  "  pm.expect(data.domains).to.be.an('array');",
+                  "});",
+                  "",
+                  "pm.test('Has docker and logs fields', function () {",
+                  "  pm.expect(data).to.have.property('docker_containers');",
+                  "  pm.expect(data).to.have.property('log_sources');",
+                  "  pm.expect(data).to.have.property('recent_logs');",
+                  "  pm.expect(data.docker_containers).to.be.an('array');",
+                  "  pm.expect(data.recent_logs).to.be.an('array');",
+                  "});",
+                  "",
+                  "if (Array.isArray(data.recent_logs) && data.recent_logs.length > 0) {",
+                  "  pm.test('Recent logs item structure is valid', function () {",
+                  "    const item = data.recent_logs[0];",
+                  "    pm.expect(item).to.have.property('ts');",
+                  "    pm.expect(item).to.have.property('source');",
+                  "    pm.expect(item).to.have.property('level');",
+                  "    pm.expect(item).to.have.property('message');",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ],
           "request": {
             "method": "GET",
             "header": [
@@ -195,7 +236,7 @@
                 "{{serverId}}"
               ]
             },
-            "description": "Server details (must belong to current user), including metadata, latest metrics, alerts, `ip_addresses`, `domains`, `docker_containers`, `log_sources`, and `recent_logs` (systemd/nginx/docker)."
+            "description": "Server details (must belong to current user), including metadata, latest metrics, alerts, `ip_addresses`, `domains`, `docker_containers`, `log_sources`, and `recent_logs` (systemd/nginx/docker). Includes Postman tests to validate new ops fields."
           },
           "response": []
         },
@@ -254,7 +295,7 @@
             "ingest"
           ]
         },
-        "description": "Agent ingestion endpoint (server agent token auth, not Supabase auth). Supports host network/domain metadata and logs from `systemd`, `nginx`, and `docker`."
+        "description": "Agent ingestion endpoint (server agent token auth, not Supabase auth). Supports host network/domain metadata and logs from `systemd`, `nginx`, and `docker`. Backend also falls back to request client IP if host IP is missing."
       },
       "response": []
     },
