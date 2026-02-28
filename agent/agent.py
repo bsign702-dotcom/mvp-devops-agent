@@ -72,37 +72,32 @@ def _collect_ip_addresses() -> list[str]:
 
 def _collect_domains_from_nginx_config() -> list[str]:
     roots = [
-        "/host_etc_nginx/sites-enabled",
-        "/host_etc_nginx/conf.d",
-        "/etc/nginx/sites-enabled",
-        "/etc/nginx/conf.d",
+        "/host_etc_nginx",
+        "/etc/nginx",
     ]
     names: set[str] = set()
     pattern = re.compile(r"\bserver_name\s+([^;]+);")
     for root in roots:
         if not os.path.isdir(root):
             continue
-        try:
-            entries = sorted(os.listdir(root))
-        except Exception:
-            continue
-        for entry in entries:
-            if not entry.endswith(".conf"):
-                continue
-            path = os.path.join(root, entry)
-            try:
-                with open(path, "r", encoding="utf-8", errors="replace") as f:
-                    for line in f:
-                        match = pattern.search(line)
-                        if not match:
-                            continue
-                        for token in match.group(1).split():
-                            domain = token.strip().lower()
-                            if not domain or domain in {"_", "localhost"}:
+        for dirpath, _, filenames in os.walk(root):
+            if len(names) >= 30:
+                break
+            for filename in sorted(filenames):
+                path = os.path.join(dirpath, filename)
+                try:
+                    with open(path, "r", encoding="utf-8", errors="replace") as f:
+                        for line in f:
+                            match = pattern.search(line)
+                            if not match:
                                 continue
-                            names.add(domain)
-            except Exception:
-                continue
+                            for token in match.group(1).split():
+                                domain = token.strip().lower()
+                                if not domain or domain in {"_", "localhost"}:
+                                    continue
+                                names.add(domain)
+                except Exception:
+                    continue
     return sorted(names)[:30]
 
 

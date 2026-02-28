@@ -2,7 +2,7 @@
   "info": {
     "name": "AI DevOps Monitor MVP API",
     "_postman_id": "7f5e1d70-0b66-4f65-9f4b-9e4c8b43b1aa",
-    "description": "Postman collection for AI DevOps Monitor backend (FastAPI + PostgreSQL) with Supabase auth, servers, ingest, alerts, uptime monitors, and notifications.",
+    "description": "Postman collection for AI DevOps Monitor backend (FastAPI + PostgreSQL) with Supabase auth, servers, ingest, alerts, uptime monitors, notifications, and suggest-only LLM chat troubleshooting.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -195,7 +195,7 @@
                 "{{serverId}}"
               ]
             },
-            "description": "Server details (must belong to current user), including metadata, latest metrics, and recent alerts."
+            "description": "Server details (must belong to current user), including metadata, latest metrics, alerts, `ip_addresses`, `domains`, `docker_containers`, `log_sources`, and `recent_logs` (systemd/nginx/docker)."
           },
           "response": []
         },
@@ -242,7 +242,7 @@
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"ts\": \"2026-01-01T00:00:00Z\",\n  \"host\": {\n    \"hostname\": \"demo\",\n    \"os\": \"Linux\",\n    \"os_release\": \"6.8\",\n    \"machine\": \"x86_64\"\n  },\n  \"metrics\": {\n    \"cpu_percent\": 12.3,\n    \"ram_percent\": 55.1,\n    \"disk_percent\": 70.2,\n    \"loadavg\": [0.12, 0.22, 0.30],\n    \"net_bytes_sent\": 123,\n    \"net_bytes_recv\": 456\n  },\n  \"docker\": {\n    \"containers\": [\n      {\n        \"id\": \"abc123\",\n        \"image\": \"nginx:latest\",\n        \"name\": \"nginx\",\n        \"status\": \"Up 1 hour\"\n      }\n    ],\n    \"events\": []\n  },\n  \"logs\": {\n    \"systemd\": {\n      \"nginx\": [\"Started nginx\"],\n      \"ssh\": [\"Accepted publickey\"]\n    }\n  }\n}"
+          "raw": "{\n  \"ts\": \"2026-01-01T00:00:00Z\",\n  \"host\": {\n    \"hostname\": \"demo\",\n    \"os\": \"Linux\",\n    \"os_release\": \"6.8\",\n    \"machine\": \"x86_64\",\n    \"primary_ip\": \"10.0.0.10\",\n    \"ip_addresses\": [\"10.0.0.10\", \"172.17.0.1\"],\n    \"domains\": [\"api.example.com\", \"app.example.com\"]\n  },\n  \"metrics\": {\n    \"cpu_percent\": 12.3,\n    \"ram_percent\": 55.1,\n    \"disk_percent\": 70.2,\n    \"loadavg\": [0.12, 0.22, 0.30],\n    \"net_bytes_sent\": 123,\n    \"net_bytes_recv\": 456\n  },\n  \"docker\": {\n    \"containers\": [\n      {\n        \"id\": \"abc123\",\n        \"image\": \"nginx:latest\",\n        \"name\": \"nginx\",\n        \"status\": \"Up 1 hour\"\n      },\n      {\n        \"id\": \"def456\",\n        \"image\": \"redis:7\",\n        \"name\": \"redis\",\n        \"status\": \"Restarting (1)\"\n      }\n    ],\n    \"events\": [\n      {\n        \"Action\": \"restart\",\n        \"Actor\": {\n          \"Attributes\": {\n            \"name\": \"redis\"\n          }\n        }\n      }\n    ]\n  },\n  \"logs\": {\n    \"systemd\": {\n      \"nginx\": [\"Started nginx\"],\n      \"ssh\": [\"Accepted publickey\"]\n    },\n    \"nginx\": [\n      \"[error.log] 2026/01/01 00:00:00 [error] 1#1: *1 connect() failed\",\n      \"[access.log] 10.0.0.2 - - [01/Jan/2026:00:00:00 +0000] \\\"GET /health HTTP/1.1\\\" 200 2\"\n    ],\n    \"docker\": [\n      \"[redis] CrashLoopBackOff detected\",\n      \"[api] Connection timeout to database\"\n    ]\n  }\n}"
         },
         "url": {
           "raw": "{{baseUrl}}/v1/ingest",
@@ -254,7 +254,7 @@
             "ingest"
           ]
         },
-        "description": "Agent ingestion endpoint (server agent token auth, not Supabase auth)."
+        "description": "Agent ingestion endpoint (server agent token auth, not Supabase auth). Supports host network/domain metadata and logs from `systemd`, `nginx`, and `docker`."
       },
       "response": []
     },

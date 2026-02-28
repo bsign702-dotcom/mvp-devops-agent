@@ -625,6 +625,8 @@ def ingest(payload: IngestRequest, request: Request) -> IngestResponse:
     raw_token = _extract_bearer_token(request)
     token_hash = hash_agent_token(raw_token, settings.agent_token_pepper)
     rate_limiter.check(f"agent:{token_hash}", settings.agent_rate_limit_per_minute)
+    forwarded_for = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+    client_ip = forwarded_for or (request.client.host if request.client else "")
 
     with get_engine().begin() as conn:
         server = conn.execute(
@@ -671,8 +673,22 @@ def ingest(payload: IngestRequest, request: Request) -> IngestResponse:
             },
         )
 
+        host_meta = payload.host.model_dump(exclude_none=True)
+        host_ips = host_meta.get("ip_addresses")
+        if not isinstance(host_ips, list):
+            host_ips = []
+        host_ips = [str(ip).strip() for ip in host_ips if str(ip).strip()]
+        if client_ip and client_ip not in host_ips:
+            host_ips.append(client_ip)
+        if host_ips:
+            host_meta["ip_addresses"] = host_ips
+        if not host_meta.get("primary_ip") and host_ips:
+            host_meta["primary_ip"] = host_ips[0]
+        if client_ip:
+            host_meta["agent_client_ip"] = client_ip
+
         metadata_patch = {
-            "host": payload.host.model_dump(exclude_none=True),
+            "host": host_meta,
             "docker_container_count": len(payload.docker.containers or []),
             "docker_containers": [
                 {
@@ -701,11 +717,17 @@ def ingest(payload: IngestRequest, request: Request) -> IngestResponse:
         resolve_alert_type(conn, server["id"], "agent_offline")
 
         logs_inserted = 0
+        systemd_inserted = 0
+        nginx_inserted = 0
+        docker_inserted = 0
         restart_lines: list[str] = []
-        max_logs = 300
+        max_logs = 360
+        max_systemd_logs = 180
+        max_nginx_logs = 90
+        max_docker_logs = 90
         for unit, lines in (payload.logs.systemd or {}).items():
             for line in lines:
-                if logs_inserted >= max_logs:
+                if logs_inserted >= max_logs or systemd_inserted >= max_systemd_logs:
                     break
                 msg = f"[{unit}] {line}" if unit else line
                 level = infer_log_level(msg)
@@ -724,13 +746,14 @@ def ingest(payload: IngestRequest, request: Request) -> IngestResponse:
                     },
                 )
                 logs_inserted += 1
+                systemd_inserted += 1
                 if is_service_restart_line(msg):
                     restart_lines.append(msg)
-            if logs_inserted >= max_logs:
+            if logs_inserted >= max_logs or systemd_inserted >= max_systemd_logs:
                 break
 
         for line in (payload.logs.nginx or []):
-            if logs_inserted >= max_logs:
+            if logs_inserted >= max_logs or nginx_inserted >= max_nginx_logs:
                 break
             msg = str(line).strip()
             if not msg:
@@ -751,9 +774,10 @@ def ingest(payload: IngestRequest, request: Request) -> IngestResponse:
                 },
             )
             logs_inserted += 1
+            nginx_inserted += 1
 
         for line in (payload.logs.docker or []):
-            if logs_inserted >= max_logs:
+            if logs_inserted >= max_logs or docker_inserted >= max_docker_logs:
                 break
             msg = str(line).strip()
             if not msg:
@@ -774,11 +798,16 @@ def ingest(payload: IngestRequest, request: Request) -> IngestResponse:
                 },
             )
             logs_inserted += 1
+            docker_inserted += 1
 
         event_limit = 40
         event_count = 0
         for event in (payload.docker.events or []):
-            if logs_inserted >= max_logs or event_count >= event_limit:
+            if (
+                logs_inserted >= max_logs
+                or event_count >= event_limit
+                or docker_inserted >= max_docker_logs
+            ):
                 break
             if isinstance(event, dict):
                 action = event.get("Action") or event.get("action") or event.get("status") or "event"
@@ -805,6 +834,7 @@ def ingest(payload: IngestRequest, request: Request) -> IngestResponse:
             )
             logs_inserted += 1
             event_count += 1
+            docker_inserted += 1
 
         alerts_created = evaluate_metric_alerts(
             conn,
