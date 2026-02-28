@@ -2,7 +2,7 @@
   "info": {
     "name": "AI DevOps Monitor MVP API",
     "_postman_id": "7f5e1d70-0b66-4f65-9f4b-9e4c8b43b1aa",
-    "description": "Postman collection for AI DevOps Monitor backend (FastAPI + PostgreSQL) with Supabase auth, servers, ingest, alerts, uptime monitors, notifications, suggest-only LLM chat troubleshooting, and server ops visibility (IP/domains/nginx/docker logs).",
+    "description": "Postman collection for AI DevOps Monitor backend (FastAPI + PostgreSQL) with Supabase auth, servers, ingest, alerts, uptime monitors, notifications, suggest-only LLM chat troubleshooting, and server ops visibility (IP/domains/nginx/docker/system logs).",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -67,6 +67,24 @@
           ]
         },
         "description": "Public health endpoint."
+      },
+      "response": []
+    },
+    {
+      "name": "Install Script",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/install.sh",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "install.sh"
+          ]
+        },
+        "description": "Public installer script served by the backend. Use with: `curl -fsSL {{baseUrl}}/install.sh | sudo bash -s -- --token \"<agent_token>\" --api \"{{baseUrl}}\"`."
       },
       "response": []
     },
@@ -212,6 +230,21 @@
                   "    pm.expect(item).to.have.property('level');",
                   "    pm.expect(item).to.have.property('message');",
                   "  });",
+                  "  pm.test('Recent logs source/level values look valid', function () {",
+                  "    const allowedSources = ['systemd', 'nginx', 'docker', 'unknown'];",
+                  "    const allowedLevels = ['info', 'warn', 'error', 'unknown'];",
+                  "    for (const item of data.recent_logs) {",
+                  "      pm.expect(allowedSources).to.include(item.source);",
+                  "      pm.expect(allowedLevels).to.include(item.level);",
+                  "    }",
+                  "  });",
+                  "  pm.test('log_sources summary is consistent', function () {",
+                  "    pm.expect(data.log_sources).to.be.an('object');",
+                  "    const total = Object.values(data.log_sources).reduce((sum, value) => sum + Number(value || 0), 0);",
+                  "    pm.expect(total).to.eql(data.recent_logs.length);",
+                  "  });",
+                  "} else {",
+                  "  console.warn('No recent_logs yet. Wait for agent ingestion cycle.');",
                   "}"
                 ]
               }
@@ -269,6 +302,30 @@
     },
     {
       "name": "Ingest (Agent Token)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "",
+              "const data = pm.response.json();",
+              "pm.test('Ingest response has expected fields', function () {",
+              "  pm.expect(data).to.have.property('ok', true);",
+              "  pm.expect(data).to.have.property('server_id');",
+              "  pm.expect(data).to.have.property('alerts_created');",
+              "  pm.expect(data).to.have.property('logs_inserted');",
+              "  pm.expect(data.alerts_created).to.be.an('array');",
+              "  pm.expect(data.logs_inserted).to.be.a('number');",
+              "  pm.expect(data.logs_inserted).to.be.at.least(0);",
+              "});"
+            ]
+          }
+        }
+      ],
       "request": {
         "method": "POST",
         "header": [
@@ -283,7 +340,7 @@
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"ts\": \"2026-01-01T00:00:00Z\",\n  \"host\": {\n    \"hostname\": \"demo\",\n    \"os\": \"Linux\",\n    \"os_release\": \"6.8\",\n    \"machine\": \"x86_64\",\n    \"primary_ip\": \"10.0.0.10\",\n    \"ip_addresses\": [\"10.0.0.10\", \"172.17.0.1\"],\n    \"domains\": [\"api.example.com\", \"app.example.com\"]\n  },\n  \"metrics\": {\n    \"cpu_percent\": 12.3,\n    \"ram_percent\": 55.1,\n    \"disk_percent\": 70.2,\n    \"loadavg\": [0.12, 0.22, 0.30],\n    \"net_bytes_sent\": 123,\n    \"net_bytes_recv\": 456\n  },\n  \"docker\": {\n    \"containers\": [\n      {\n        \"id\": \"abc123\",\n        \"image\": \"nginx:latest\",\n        \"name\": \"nginx\",\n        \"status\": \"Up 1 hour\"\n      },\n      {\n        \"id\": \"def456\",\n        \"image\": \"redis:7\",\n        \"name\": \"redis\",\n        \"status\": \"Restarting (1)\"\n      }\n    ],\n    \"events\": [\n      {\n        \"Action\": \"restart\",\n        \"Actor\": {\n          \"Attributes\": {\n            \"name\": \"redis\"\n          }\n        }\n      }\n    ]\n  },\n  \"logs\": {\n    \"systemd\": {\n      \"nginx\": [\"Started nginx\"],\n      \"ssh\": [\"Accepted publickey\"]\n    },\n    \"nginx\": [\n      \"[error.log] 2026/01/01 00:00:00 [error] 1#1: *1 connect() failed\",\n      \"[access.log] 10.0.0.2 - - [01/Jan/2026:00:00:00 +0000] \\\"GET /health HTTP/1.1\\\" 200 2\"\n    ],\n    \"docker\": [\n      \"[redis] CrashLoopBackOff detected\",\n      \"[api] Connection timeout to database\"\n    ]\n  }\n}"
+          "raw": "{\n  \"ts\": \"2026-01-01T00:00:00Z\",\n  \"host\": {\n    \"hostname\": \"demo\",\n    \"os\": \"Linux\",\n    \"os_release\": \"6.8\",\n    \"machine\": \"x86_64\",\n    \"primary_ip\": \"10.0.0.10\",\n    \"ip_addresses\": [\"10.0.0.10\", \"172.17.0.1\"],\n    \"domains\": [\"api.example.com\", \"app.example.com\"]\n  },\n  \"metrics\": {\n    \"cpu_percent\": 12.3,\n    \"ram_percent\": 55.1,\n    \"disk_percent\": 70.2,\n    \"loadavg\": [0.12, 0.22, 0.30],\n    \"net_bytes_sent\": 123,\n    \"net_bytes_recv\": 456\n  },\n  \"docker\": {\n    \"containers\": [\n      {\n        \"id\": \"abc123\",\n        \"image\": \"nginx:latest\",\n        \"name\": \"nginx\",\n        \"status\": \"Up 1 hour\"\n      },\n      {\n        \"id\": \"def456\",\n        \"image\": \"redis:7\",\n        \"name\": \"redis\",\n        \"status\": \"Restarting (1)\"\n      }\n    ],\n    \"events\": [\n      {\n        \"Action\": \"restart\",\n        \"Actor\": {\n          \"Attributes\": {\n            \"name\": \"redis\"\n          }\n        }\n      }\n    ]\n  },\n  \"logs\": {\n    \"systemd\": {\n      \"nginx\": [\"Started nginx\"],\n      \"ssh\": [\"Accepted publickey\"],\n      \"system\": [\"[syslog] kernel: nf_conntrack table full\"]\n    },\n    \"nginx\": [\n      \"[error.log] 2026/01/01 00:00:00 [error] 1#1: *1 connect() failed\",\n      \"[access.log] 10.0.0.2 - - [01/Jan/2026:00:00:00 +0000] \\\"GET /health HTTP/1.1\\\" 200 2\"\n    ],\n    \"docker\": [\n      \"[redis] CrashLoopBackOff detected\",\n      \"[api] Connection timeout to database\"\n    ]\n  }\n}"
         },
         "url": {
           "raw": "{{baseUrl}}/v1/ingest",
@@ -295,7 +352,7 @@
             "ingest"
           ]
         },
-        "description": "Agent ingestion endpoint (server agent token auth, not Supabase auth). Supports host network/domain metadata and logs from `systemd`, `nginx`, and `docker`. Backend also falls back to request client IP if host IP is missing."
+        "description": "Agent ingestion endpoint (server agent token auth, not Supabase auth). Supports host network/domain metadata and logs from `systemd`, `nginx`, and `docker`. `systemd.system` can carry fallback system file logs when journalctl is unavailable. Backend also adds request client IP when host IP is missing."
       },
       "response": []
     },
