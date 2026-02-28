@@ -120,14 +120,21 @@ restart_agent_container() {
   fi
 
   echo "Starting agent container..."
-  docker run -d --name "$CONTAINER_NAME" --restart=always \
-    -e AGENT_TOKEN="$TOKEN" \
-    -e INGEST_URL="$API/v1/ingest" \
-    -e INTERVAL_SEC="$INTERVAL_SEC" \
-    -e SYSTEMD_UNITS="$SYSTEMD_UNITS" \
-    -v /var/run/docker.sock:/var/run/docker.sock \
-    -v /var/log:/var/log:ro \
-    "$AGENT_IMAGE" >/dev/null
+  local run_args=(
+    -d
+    --name "$CONTAINER_NAME"
+    --restart=always
+    -e AGENT_TOKEN="$TOKEN"
+    -e INGEST_URL="$API/v1/ingest"
+    -e INTERVAL_SEC="$INTERVAL_SEC"
+    -e SYSTEMD_UNITS="$SYSTEMD_UNITS"
+    -v /var/run/docker.sock:/var/run/docker.sock
+    -v /var/log:/var/log:ro
+  )
+  if [[ -d /etc/nginx ]]; then
+    run_args+=(-v /etc/nginx:/host_etc_nginx:ro)
+  fi
+  docker run "${run_args[@]}" "$AGENT_IMAGE" >/dev/null
 }
 
 health_check() {

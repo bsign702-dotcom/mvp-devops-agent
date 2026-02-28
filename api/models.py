@@ -59,6 +59,13 @@ class AlertItem(BaseModel):
     resolved_at: datetime | None
 
 
+class ServerLogItem(BaseModel):
+    ts: datetime
+    source: str
+    level: str
+    message: str
+
+
 class ServerDetailResponse(BaseModel):
     server_id: UUID
     name: str
@@ -66,6 +73,12 @@ class ServerDetailResponse(BaseModel):
     created_at: datetime
     last_seen_at: datetime | None
     metadata: dict[str, Any]
+    ip_addresses: list[str] = Field(default_factory=list)
+    domains: list[str] = Field(default_factory=list)
+    primary_ip: str | None = None
+    docker_containers: list[dict[str, Any]] = Field(default_factory=list)
+    log_sources: dict[str, int] = Field(default_factory=dict)
+    recent_logs: list[ServerLogItem] = Field(default_factory=list)
     last_metrics: MetricSummary | None
     alerts: list[AlertItem]
 
@@ -195,6 +208,9 @@ class HostInfo(BaseModel):
     os: str | None = None
     os_release: str | None = None
     machine: str | None = None
+    primary_ip: str | None = None
+    ip_addresses: list[str] = Field(default_factory=list)
+    domains: list[str] = Field(default_factory=list)
 
 
 class MetricsPayload(BaseModel):
@@ -220,6 +236,8 @@ class DockerPayload(BaseModel):
 
 class LogsPayload(BaseModel):
     systemd: dict[str, list[str]] = Field(default_factory=dict)
+    nginx: list[str] = Field(default_factory=list)
+    docker: list[str] = Field(default_factory=list)
 
 
 class IngestRequest(BaseModel):

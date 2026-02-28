@@ -126,6 +126,11 @@ Behavior:
 - `GET /v1/chat/sessions/{session_id}/messages`
 - `POST /v1/chat/sessions/{session_id}/messages`
 
+`GET /v1/servers/{server_id}` now also includes:
+- `ip_addresses`, `primary_ip`, `domains`
+- `docker_containers`
+- `log_sources` summary and `recent_logs` (systemd/nginx/docker)
+
 ## LLM Config
 
 Set these env vars in `.env` / compose:

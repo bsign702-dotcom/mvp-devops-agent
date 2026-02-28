@@ -42,6 +42,7 @@ from .models import (
     ServerCreateResponse,
     ServerDeleteResponse,
     ServerDetailResponse,
+    ServerLogItem,
     ServerListItem,
     UptimeCheckItem,
     UptimeMonitorCreateRequest,
@@ -366,9 +367,43 @@ def get_server(
             {"server_id": str(server_id)},
         ).mappings().all()
 
+        log_rows = conn.execute(
+            text(
+                """
+                SELECT ts, source, level, message
+                FROM logs
+                WHERE server_id = :server_id
+                ORDER BY ts DESC
+                LIMIT 120
+                """
+            ),
+            {"server_id": str(server_id)},
+        ).mappings().all()
+
     metadata = server.get("metadata") or {}
     if isinstance(metadata, str):
         metadata = json.loads(metadata)
+
+    host_meta = metadata.get("host") if isinstance(metadata, dict) else {}
+    if not isinstance(host_meta, dict):
+        host_meta = {}
+    ip_addresses = host_meta.get("ip_addresses") if isinstance(host_meta.get("ip_addresses"), list) else []
+    ip_addresses = [str(ip).strip() for ip in ip_addresses if str(ip).strip()]
+    domains = host_meta.get("domains") if isinstance(host_meta.get("domains"), list) else []
+    domains = [str(domain).strip() for domain in domains if str(domain).strip()]
+    primary_ip = host_meta.get("primary_ip")
+    if primary_ip is not None:
+        primary_ip = str(primary_ip).strip() or None
+
+    docker_containers = metadata.get("docker_containers") if isinstance(metadata, dict) else []
+    if not isinstance(docker_containers, list):
+        docker_containers = []
+
+    recent_logs_rows = [dict(row) for row in reversed(log_rows)]
+    log_sources: dict[str, int] = {}
+    for row in recent_logs_rows:
+        source = str(row.get("source") or "unknown")
+        log_sources[source] = log_sources.get(source, 0) + 1
 
     return ServerDetailResponse(
         server_id=server["server_id"],
@@ -377,6 +412,12 @@ def get_server(
         created_at=server["created_at"],
         last_seen_at=server["last_seen_at"],
         metadata=metadata,
+        ip_addresses=ip_addresses,
+        domains=domains,
+        primary_ip=primary_ip,
+        docker_containers=docker_containers,
+        log_sources=log_sources,
+        recent_logs=[ServerLogItem(**row) for row in recent_logs_rows],
         last_metrics=MetricSummary(**dict(metric_row)) if metric_row else None,
         alerts=[_row_to_alert_item(row) for row in alert_rows],
     )
@@ -633,6 +674,17 @@ def ingest(payload: IngestRequest, request: Request) -> IngestResponse:
         metadata_patch = {
             "host": payload.host.model_dump(exclude_none=True),
             "docker_container_count": len(payload.docker.containers or []),
+            "docker_containers": [
+                {
+                    "id": container.id,
+                    "image": container.image,
+                    "name": container.name,
+                    "status": container.status,
+                }
+                for container in (payload.docker.containers or [])[:30]
+            ],
+            "docker_event_count": len(payload.docker.events or []),
+            "last_ingest_ts": payload.ts.isoformat(),
         }
         conn.execute(
             text(
@@ -676,6 +728,83 @@ def ingest(payload: IngestRequest, request: Request) -> IngestResponse:
                     restart_lines.append(msg)
             if logs_inserted >= max_logs:
                 break
+
+        for line in (payload.logs.nginx or []):
+            if logs_inserted >= max_logs:
+                break
+            msg = str(line).strip()
+            if not msg:
+                continue
+            level = infer_log_level(msg)
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO logs (server_id, ts, source, level, message)
+                    VALUES (:server_id, :ts, 'nginx', :level, :message)
+                    """
+                ),
+                {
+                    "server_id": str(server["id"]),
+                    "ts": payload.ts,
+                    "level": level,
+                    "message": msg,
+                },
+            )
+            logs_inserted += 1
+
+        for line in (payload.logs.docker or []):
+            if logs_inserted >= max_logs:
+                break
+            msg = str(line).strip()
+            if not msg:
+                continue
+            level = infer_log_level(msg)
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO logs (server_id, ts, source, level, message)
+                    VALUES (:server_id, :ts, 'docker', :level, :message)
+                    """
+                ),
+                {
+                    "server_id": str(server["id"]),
+                    "ts": payload.ts,
+                    "level": level,
+                    "message": msg,
+                },
+            )
+            logs_inserted += 1
+
+        event_limit = 40
+        event_count = 0
+        for event in (payload.docker.events or []):
+            if logs_inserted >= max_logs or event_count >= event_limit:
+                break
+            if isinstance(event, dict):
+                action = event.get("Action") or event.get("action") or event.get("status") or "event"
+                actor = event.get("Actor") if isinstance(event.get("Actor"), dict) else {}
+                attrs = actor.get("Attributes") if isinstance(actor.get("Attributes"), dict) else {}
+                name = attrs.get("name") or event.get("from") or "container"
+                msg = f"[event] {action} ({name})"
+            else:
+                msg = f"[event] {str(event)}"
+            level = infer_log_level(msg)
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO logs (server_id, ts, source, level, message)
+                    VALUES (:server_id, :ts, 'docker', :level, :message)
+                    """
+                ),
+                {
+                    "server_id": str(server["id"]),
+                    "ts": payload.ts,
+                    "level": level,
+                    "message": msg,
+                },
+            )
+            logs_inserted += 1
+            event_count += 1
 
         alerts_created = evaluate_metric_alerts(
             conn,
