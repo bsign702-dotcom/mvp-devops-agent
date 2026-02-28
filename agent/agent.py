@@ -217,6 +217,20 @@ def collect_nginx_logs(interval_sec: int) -> list[str]:
     return lines[-120:]
 
 
+def _collect_system_file_logs(interval_sec: int) -> list[str]:
+    line_cap = max(30, min(120, interval_sec * 4))
+    lines: list[str] = []
+    for path, prefix in [
+        ("/var/log/syslog", "[syslog]"),
+        ("/var/log/messages", "[messages]"),
+        ("/var/log/auth.log", "[auth]"),
+        ("/var/log/kern.log", "[kern]"),
+    ]:
+        for line in _read_new_file_lines(path, max_bytes=300_000, max_lines=line_cap):
+            lines.append(f"{prefix} {line}")
+    return lines[-200:]
+
+
 def collect_docker_log_lines(interval_sec: int, containers: list[dict[str, Any]]) -> list[str]:
     target_containers: list[dict[str, Any]] = []
     for container in containers:
@@ -246,39 +260,58 @@ def collect_docker_log_lines(interval_sec: int, containers: list[dict[str, Any]]
             if not msg:
                 continue
             lines.append(f"[{container_name}] {msg}")
+
+    if not lines:
+        for path in ("/var/log/docker.log", "/var/log/daemon.log"):
+            for line in _read_new_file_lines(path, max_bytes=250_000, max_lines=80):
+                lower = line.lower()
+                if "docker" in lower or "container" in lower:
+                    lines.append(f"[engine] {line}")
+
+    if not lines and containers:
+        for container in containers[:8]:
+            container_id = str(container.get("id", "")).strip()[:12]
+            container_name = str(container.get("name", "")).strip() or container_id or "container"
+            image = str(container.get("image", "")).strip()
+            status = str(container.get("status", "")).strip()
+            lines.append(f"[{container_name}] status={status} image={image} id={container_id}")
     return lines[-160:]
 
 
 def collect_systemd_logs(units: list[str], interval_sec: int) -> dict[str, list[str]]:
     systemd_logs: dict[str, list[str]] = {}
-    if not shutil.which("journalctl"):
-        return systemd_logs
+    has_journalctl = bool(shutil.which("journalctl"))
+    if has_journalctl:
+        since_arg = f"-{int(interval_sec)} seconds"
+        for unit in units:
+            unit = unit.strip()
+            if not unit:
+                continue
+            proc = _run_command(
+                [
+                    "journalctl",
+                    "-u",
+                    unit,
+                    "--since",
+                    since_arg,
+                    "--no-pager",
+                    "-n",
+                    "200",
+                    "-o",
+                    "short-iso",
+                ],
+                timeout=6,
+            )
+            if not proc or proc.returncode != 0:
+                continue
+            lines = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+            if lines:
+                systemd_logs[unit] = lines
 
-    since_arg = f"-{int(interval_sec)} seconds"
-    for unit in units:
-        unit = unit.strip()
-        if not unit:
-            continue
-        proc = _run_command(
-            [
-                "journalctl",
-                "-u",
-                unit,
-                "--since",
-                since_arg,
-                "--no-pager",
-                "-n",
-                "200",
-                "-o",
-                "short-iso",
-            ],
-            timeout=6,
-        )
-        if not proc or proc.returncode != 0:
-            continue
-        lines = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
-        if lines:
-            systemd_logs[unit] = lines
+    if not systemd_logs:
+        fallback_lines = _collect_system_file_logs(interval_sec)
+        if fallback_lines:
+            systemd_logs["system"] = fallback_lines
     return systemd_logs
 
 
