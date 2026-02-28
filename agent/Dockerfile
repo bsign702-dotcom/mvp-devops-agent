@@ -11,8 +11,13 @@ RUN apt-get update \
 
 RUN pip install --no-cache-dir psutil requests
 
-# Fail fast at build-time if Docker CLI is not present in the image.
-RUN command -v docker && docker --version
+# Debian variants may expose docker client as `docker.io` without `docker` symlink.
+# Normalize to `docker` because agent code calls `docker`.
+RUN if ! command -v docker >/dev/null 2>&1 && command -v docker.io >/dev/null 2>&1; then \
+      ln -s "$(command -v docker.io)" /usr/local/bin/docker; \
+    fi \
+ && command -v docker \
+ && docker --version
 
 COPY agent/agent.py /app/agent.py
 

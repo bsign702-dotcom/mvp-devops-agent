@@ -140,7 +140,12 @@ def collect_metrics() -> dict[str, Any]:
 
 
 def _run_command(cmd: list[str], timeout: int = 8) -> subprocess.CompletedProcess[str] | None:
-    if not shutil.which(cmd[0]):
+    if cmd and cmd[0] == "docker" and not shutil.which("docker"):
+        if shutil.which("docker.io"):
+            cmd = ["docker.io", *cmd[1:]]
+        else:
+            return None
+    elif not shutil.which(cmd[0]):
         return None
     try:
         return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
