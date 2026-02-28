@@ -52,6 +52,24 @@ def collect_host() -> dict[str, Any]:
     }
 
 
+def _parse_agent_tags() -> dict[str, str]:
+    raw = os.getenv("AGENT_TAGS", "").strip()
+    if not raw:
+        return {}
+    pairs = [x.strip() for x in raw.split(",") if x.strip()]
+    tags: dict[str, str] = {}
+    for pair in pairs:
+        if "=" not in pair:
+            continue
+        key, value = pair.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if not key:
+            continue
+        tags[key[:64]] = value[:256]
+    return tags
+
+
 def _collect_ip_addresses() -> list[str]:
     ips: list[str] = []
     seen: set[str] = set()
@@ -334,19 +352,90 @@ def build_payload(interval_sec: int, units: list[str]) -> dict[str, Any]:
     }
 
 
+def _ingest_base_url(ingest_url: str) -> str:
+    value = ingest_url.strip().rstrip("/")
+    suffix = "/v1/ingest"
+    if value.endswith(suffix):
+        return value[: -len(suffix)]
+    return value
+
+
+def _collect_self_check(units: list[str], tags: dict[str, str]) -> dict[str, Any]:
+    docker_proc = _run_command(["docker", "--version"], timeout=4)
+    docker_version = ""
+    if docker_proc and docker_proc.returncode == 0:
+        docker_version = (docker_proc.stdout or docker_proc.stderr or "").strip()[:200]
+
+    systemctl_available = bool(shutil.which("systemctl"))
+    journalctl_available = bool(shutil.which("journalctl"))
+    nginx_paths = [path for path in ["/var/log/nginx", "/host_etc_nginx", "/etc/nginx"] if os.path.exists(path)]
+
+    return {
+        "docker_version": docker_version or None,
+        "systemd_available": systemctl_available,
+        "journalctl_access": journalctl_available,
+        "nginx_paths": nginx_paths,
+        "supports_docker": bool(docker_version),
+        "supports_nginx_logs": bool(nginx_paths),
+        "supports_systemd_logs": "systemd" in [u.lower() for u in units] or "ssh" in [u.lower() for u in units],
+        "supports_journalctl_logs": journalctl_available,
+        "tags": tags,
+        "metadata": {
+            "hostname": platform.node(),
+            "units": units,
+        },
+    }
+
+
+def send_self_check(
+    *,
+    session: requests.Session,
+    ingest_url: str,
+    agent_token: str,
+    units: list[str],
+    tags: dict[str, str],
+) -> None:
+    endpoint = _ingest_base_url(ingest_url) + "/v1/agent/self-check"
+    payload = _collect_self_check(units, tags)
+    try:
+        resp = session.post(
+            endpoint,
+            json=payload,
+            headers={"Authorization": f"Bearer {agent_token}"},
+            timeout=8,
+        )
+        log(
+            "self_check_response",
+            status_code=resp.status_code,
+            ok=resp.ok,
+            response_text=(resp.text[:300] if resp.text else ""),
+        )
+    except Exception as exc:
+        log("self_check_error", error=str(exc))
+
+
 def main() -> None:
     ingest_url = env_required("INGEST_URL")
     agent_token = env_required("AGENT_TOKEN")
     interval_sec = int(os.getenv("INTERVAL_SEC", "15"))
-    units = [u.strip() for u in os.getenv("SYSTEMD_UNITS", "nginx,ssh").split(",") if u.strip()]
+    units = [u.strip() for u in os.getenv("SYSTEMD_UNITS", "nginx,ssh,docker").split(",") if u.strip()]
+    tags = _parse_agent_tags()
 
     # Warm up psutil CPU sampling so the first sent value is more useful.
     psutil.cpu_percent(interval=None)
 
     session = requests.Session()
     backoff_sec = 1
+    cycles = 0
 
-    log("agent_started", ingest_url=ingest_url, interval_sec=interval_sec, units=units)
+    send_self_check(
+        session=session,
+        ingest_url=ingest_url,
+        agent_token=agent_token,
+        units=units,
+        tags=tags,
+    )
+    log("agent_started", ingest_url=ingest_url, interval_sec=interval_sec, units=units, tags=tags)
     while True:
         try:
             payload = build_payload(interval_sec, units)
@@ -364,6 +453,15 @@ def main() -> None:
             )
             if not (200 <= resp.status_code < 300):
                 raise RuntimeError(f"HTTP {resp.status_code}")
+            cycles += 1
+            if cycles % 30 == 0:
+                send_self_check(
+                    session=session,
+                    ingest_url=ingest_url,
+                    agent_token=agent_token,
+                    units=units,
+                    tags=tags,
+                )
             backoff_sec = 1
             time.sleep(interval_sec)
         except Exception as exc:

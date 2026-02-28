@@ -49,6 +49,7 @@ services:
       LLM_SUGGEST_ONLY: ${LLM_SUGGEST_ONLY:-true}
       LLM_MAX_CONTEXT_CHARS: ${LLM_MAX_CONTEXT_CHARS:-12000}
       ADMIN_NOTIFY_EMAILS: ${ADMIN_NOTIFY_EMAILS:-sautma223@gmail.com}
+      AGENT_DEFAULT_IMAGE: ${AGENT_DEFAULT_IMAGE:-bsign/devops-agent:latest}
     ports:
       - "8000:8000"
     restart: unless-stopped

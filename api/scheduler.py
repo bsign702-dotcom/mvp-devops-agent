@@ -27,9 +27,15 @@ def _offline_check_job() -> None:
         offline_rows = conn.execute(
             text(
                 """
-                SELECT id, name, last_seen_at
-                FROM servers
-                WHERE last_seen_at IS NULL OR last_seen_at < :cutoff
+                SELECT s.id, s.name, COALESCE(h.last_heartbeat_at, s.last_seen_at) AS last_seen_at
+                FROM servers s
+                LEFT JOIN (
+                    SELECT server_id, MAX(ts) AS last_heartbeat_at
+                    FROM server_heartbeats
+                    GROUP BY server_id
+                ) h ON h.server_id = s.id
+                WHERE COALESCE(h.last_heartbeat_at, s.last_seen_at) IS NULL
+                   OR COALESCE(h.last_heartbeat_at, s.last_seen_at) < :cutoff
                 """
             ),
             {"cutoff": cutoff},
@@ -57,9 +63,15 @@ def _offline_check_job() -> None:
         recent_rows = conn.execute(
             text(
                 """
-                SELECT id
-                FROM servers
-                WHERE last_seen_at IS NOT NULL AND last_seen_at >= :cutoff
+                SELECT s.id
+                FROM servers s
+                LEFT JOIN (
+                    SELECT server_id, MAX(ts) AS last_heartbeat_at
+                    FROM server_heartbeats
+                    GROUP BY server_id
+                ) h ON h.server_id = s.id
+                WHERE COALESCE(h.last_heartbeat_at, s.last_seen_at) IS NOT NULL
+                  AND COALESCE(h.last_heartbeat_at, s.last_seen_at) >= :cutoff
                 """
             ),
             {"cutoff": cutoff},

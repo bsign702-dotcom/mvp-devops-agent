@@ -2,21 +2,30 @@
 set -euo pipefail
 
 AGENT_IMAGE="${AGENT_IMAGE:-bsign/devops-agent:latest}"
-CONTAINER_NAME="devops-agent"
+CONTAINER_NAME="${AGENT_NAME:-devops-agent}"
 INTERVAL_SEC="${INTERVAL_SEC:-15}"
-SYSTEMD_UNITS="${SYSTEMD_UNITS:-nginx,ssh}"
+SYSTEMD_UNITS="${SYSTEMD_UNITS:-nginx,ssh,docker}"
+AGENT_TAGS="${AGENT_TAGS:-}"
 TOKEN=""
 API=""
 
 usage() {
   cat <<USAGE
-Usage: install.sh --token "<token>" --api "http://api.host:8000"
+Usage: install.sh --token "<token>" --api "http://api.host:8000" [options]
 
 Installs/runs the DevOps agent container with Docker.
 Optional env vars before running:
   AGENT_IMAGE (default: $AGENT_IMAGE)
+  AGENT_NAME (default: $CONTAINER_NAME)
   INTERVAL_SEC (default: $INTERVAL_SEC)
   SYSTEMD_UNITS (default: $SYSTEMD_UNITS)
+  AGENT_TAGS (default: empty)
+Optional flags:
+  --name <container_name>
+  --units <comma_separated_units>
+  --interval <seconds>
+  --tags <k=v,k2=v2>
+  --image <image:tag>
 USAGE
 }
 
@@ -38,6 +47,26 @@ parse_args() {
         API="${2:-}"
         shift 2
         ;;
+      --name)
+        CONTAINER_NAME="${2:-}"
+        shift 2
+        ;;
+      --units)
+        SYSTEMD_UNITS="${2:-}"
+        shift 2
+        ;;
+      --interval)
+        INTERVAL_SEC="${2:-}"
+        shift 2
+        ;;
+      --tags)
+        AGENT_TAGS="${2:-}"
+        shift 2
+        ;;
+      --image)
+        AGENT_IMAGE="${2:-}"
+        shift 2
+        ;;
       -h|--help)
         usage
         exit 0
@@ -57,6 +86,19 @@ parse_args() {
   fi
 
   API="${API%/}"
+}
+
+fetch_agent_image_from_api() {
+  local response
+  local discovered
+  response="$(curl -fsS -H "Authorization: Bearer $TOKEN" "$API/v1/agent/install-config" 2>/dev/null || true)"
+  if [[ -z "$response" ]]; then
+    return 0
+  fi
+  discovered="$(printf '%s' "$response" | sed -n 's/.*"agent_image"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)"
+  if [[ -n "$discovered" ]]; then
+    AGENT_IMAGE="$discovered"
+  fi
 }
 
 warn_if_localhost_api() {
@@ -114,7 +156,8 @@ restart_agent_container() {
     if docker image inspect "$AGENT_IMAGE" >/dev/null 2>&1; then
       echo "Image pull failed, but local image exists. Continuing with local image: $AGENT_IMAGE"
     else
-      echo "Failed to pull image and no local image found: $AGENT_IMAGE" >&2
+      echo "Failed to pull agent image: $AGENT_IMAGE" >&2
+      echo "No local fallback image found. Provide --image or configure backend /v1/agent/install-config." >&2
       exit 1
     fi
   fi
@@ -128,6 +171,7 @@ restart_agent_container() {
     -e INGEST_URL="$API/v1/ingest"
     -e INTERVAL_SEC="$INTERVAL_SEC"
     -e SYSTEMD_UNITS="$SYSTEMD_UNITS"
+    -e AGENT_TAGS="$AGENT_TAGS"
     -v /var/run/docker.sock:/var/run/docker.sock
     -v /var/log:/var/log:ro
   )
@@ -155,8 +199,8 @@ health_check() {
 print_troubleshooting() {
   echo
   echo "Troubleshooting commands:"
-  echo "  docker ps | grep devops-agent"
-  echo "  docker logs devops-agent --tail 200"
+  echo "  docker ps | grep $CONTAINER_NAME"
+  echo "  docker logs $CONTAINER_NAME --tail 200"
   echo "  curl -I $API/health"
 }
 
@@ -164,6 +208,7 @@ main() {
   require_root
   parse_args "$@"
   warn_if_localhost_api
+  fetch_agent_image_from_api
   install_docker_if_needed
   restart_agent_container
   health_check

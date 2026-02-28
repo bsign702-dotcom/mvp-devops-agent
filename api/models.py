@@ -79,6 +79,9 @@ class ServerDetailResponse(BaseModel):
     docker_containers: list[dict[str, Any]] = Field(default_factory=list)
     log_sources: dict[str, int] = Field(default_factory=dict)
     recent_logs: list[ServerLogItem] = Field(default_factory=list)
+    agent_capabilities: dict[str, Any] = Field(default_factory=dict)
+    last_heartbeat_at: datetime | None = None
+    heartbeat_status: str | None = None
     last_metrics: MetricSummary | None
     alerts: list[AlertItem]
 
@@ -314,3 +317,211 @@ class ChatAskResponse(BaseModel):
 
 class HealthResponse(BaseModel):
     status: Literal["ok"]
+
+
+class StackItem(BaseModel):
+    id: str
+    name: str
+    description: str
+
+
+class StackDetailResponse(BaseModel):
+    id: str
+    name: str
+    description: str
+    required_inputs: list[str] = Field(default_factory=list)
+    steps: list[str] = Field(default_factory=list)
+    required_agent_capabilities: list[str] = Field(default_factory=list)
+
+
+class ProvisionPlanFile(BaseModel):
+    path: str
+    content: str
+
+
+class ProvisionPlanCreateRequest(BaseModel):
+    stack_id: str = Field(
+        ...,
+        min_length=1,
+        max_length=120,
+        json_schema_extra={"example": "docker-nginx-basic"},
+    )
+    inputs: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProvisionPlanResponse(BaseModel):
+    plan_id: UUID
+    server_id: UUID
+    stack_id: str
+    files: list[ProvisionPlanFile] = Field(default_factory=list)
+    commands: list[str] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+    created_at: datetime | None = None
+
+
+class PreflightCheckItem(BaseModel):
+    key: str
+    title: str
+    command: str
+    expected: str
+    required: bool = True
+
+
+class PreflightCreateRequest(BaseModel):
+    stack_id: str | None = Field(default=None, max_length=120)
+    inputs: dict[str, Any] = Field(default_factory=dict)
+
+
+class PreflightCreateResponse(BaseModel):
+    run_id: UUID
+    server_id: UUID
+    status: Literal["pending", "incomplete", "ready"]
+    checklist: list[PreflightCheckItem] = Field(default_factory=list)
+
+
+class PreflightResultsRequest(BaseModel):
+    run_id: UUID | None = None
+    results: dict[str, str] = Field(default_factory=dict)
+
+
+class PreflightResultsResponse(BaseModel):
+    run_id: UUID
+    server_id: UUID
+    status: Literal["pending", "incomplete", "ready"]
+    missing_items: list[str] = Field(default_factory=list)
+    submitted_results: dict[str, str] = Field(default_factory=dict)
+
+
+class StructuredLogEntry(BaseModel):
+    id: int
+    ts: datetime
+    source: str
+    service: str | None = None
+    level: str
+    message: str
+    fingerprint: str
+    tags: list[str] = Field(default_factory=list)
+
+
+class FingerprintAggregate(BaseModel):
+    fingerprint: str
+    count: int
+    sample_message: str
+
+
+class NameCount(BaseModel):
+    name: str
+    count: int
+
+
+class LogSearchResponse(BaseModel):
+    items: list[StructuredLogEntry] = Field(default_factory=list)
+    by_fingerprint: list[FingerprintAggregate] = Field(default_factory=list)
+    top_sources: list[NameCount] = Field(default_factory=list)
+    top_services: list[NameCount] = Field(default_factory=list)
+
+
+class MetricsHistoryPoint(BaseModel):
+    bucket_ts: datetime
+    cpu_avg: float | None = None
+    ram_avg: float | None = None
+    disk_avg: float | None = None
+    load1_avg: float | None = None
+    net_sent_max: int | None = None
+    net_recv_max: int | None = None
+    sample_count: int
+
+
+class MetricsHistoryResponse(BaseModel):
+    server_id: UUID
+    bucket: Literal["1m", "5m", "1h"]
+    points: list[MetricsHistoryPoint] = Field(default_factory=list)
+
+
+class TimelineEventItem(BaseModel):
+    ts: datetime
+    category: str
+    source: str
+    title: str
+    severity: str | None = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class TimelineResponse(BaseModel):
+    server_id: UUID
+    items: list[TimelineEventItem] = Field(default_factory=list)
+
+
+class ProjectTemplateItem(BaseModel):
+    id: str
+    name: str
+    kind: str
+    description: str
+
+
+class ProjectTemplateDetail(BaseModel):
+    id: str
+    name: str
+    kind: str
+    description: str
+    compose: str
+    nginx_conf: str
+    env_template: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ComposeLintRequest(BaseModel):
+    yaml: str = Field(
+        ...,
+        min_length=1,
+        json_schema_extra={
+            "example": "services:\\n  app:\\n    image: ghcr.io/example/app:1.0.0\\n    restart: unless-stopped\\n"
+        },
+    )
+
+
+class NginxLintRequest(BaseModel):
+    conf: str = Field(
+        ...,
+        min_length=1,
+        json_schema_extra={
+            "example": "server {\\n  listen 80;\\n  server_name app.example.com;\\n  location / { proxy_pass http://127.0.0.1:8000; }\\n}"
+        },
+    )
+
+
+class LintResponse(BaseModel):
+    ok: bool
+    errors: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class TroubleshootingPacketResponse(BaseModel):
+    server: dict[str, Any] = Field(default_factory=dict)
+    identity: dict[str, Any] = Field(default_factory=dict)
+    metrics_snapshot: dict[str, Any] = Field(default_factory=dict)
+    metric_trend: dict[str, Any] = Field(default_factory=dict)
+    recent_alerts: list[dict[str, Any]] = Field(default_factory=list)
+    recent_logs: dict[str, list[dict[str, Any]]] = Field(default_factory=dict)
+    recent_docker_events: list[dict[str, Any]] = Field(default_factory=list)
+    recent_provision_plans: list[dict[str, Any]] = Field(default_factory=list)
+    agent_capabilities: dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentSelfCheckRequest(BaseModel):
+    docker_version: str | None = None
+    systemd_available: bool = False
+    journalctl_access: bool = False
+    nginx_paths: list[str] = Field(default_factory=list)
+    supports_docker: bool = False
+    supports_nginx_logs: bool = False
+    supports_systemd_logs: bool = False
+    supports_journalctl_logs: bool = False
+    tags: dict[str, str] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentSelfCheckResponse(BaseModel):
+    ok: bool = True
+    server_id: UUID
+    capabilities: dict[str, Any] = Field(default_factory=dict)

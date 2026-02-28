@@ -9,6 +9,7 @@ from sqlalchemy import text
 from ..db import get_engine
 from ..errors import APIError
 from ..settings import get_settings
+from .foundation_service import build_chat_context_packet
 from .llm_provider import generate_assistant_reply
 
 
@@ -131,124 +132,60 @@ def _get_recent_conversation(*, session_id: UUID, limit: int = 20) -> list[dict[
 
 
 def _build_server_context(*, user_id: UUID, server_id: UUID) -> dict[str, Any]:
-    with get_engine().connect() as conn:
-        server = conn.execute(
-            text(
-                """
-                SELECT id, name, status, last_seen_at, created_at, metadata
-                FROM servers
-                WHERE id = :server_id
-                  AND user_id = :user_id
-                """
-            ),
-            {"server_id": str(server_id), "user_id": str(user_id)},
-        ).mappings().first()
-        if not server:
-            raise APIError(code="not_found", message="Server not found", status_code=404)
+    packet = build_chat_context_packet(user_id=user_id, server_id=server_id)
+    recent_alerts = packet.get("alerts") if isinstance(packet.get("alerts"), list) else []
+    unresolved_alerts = [a for a in recent_alerts if not bool(a.get("is_resolved"))]
 
-        metrics_rows = conn.execute(
-            text(
-                """
-                SELECT ts, cpu_percent, ram_percent, disk_percent, load1, load5, load15, net_bytes_sent, net_bytes_recv
-                FROM metrics
-                WHERE server_id = :server_id
-                ORDER BY ts DESC
-                LIMIT 20
-                """
-            ),
-            {"server_id": str(server_id)},
-        ).mappings().all()
+    packet_logs = packet.get("logs") if isinstance(packet.get("logs"), dict) else {}
+    flat_logs: list[dict[str, Any]] = []
+    for source_name, rows in packet_logs.items():
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            flat_logs.append(
+                {
+                    "ts": row.get("ts"),
+                    "source": row.get("source") or source_name,
+                    "level": row.get("level", "unknown"),
+                    "message": row.get("message", ""),
+                }
+            )
 
-        unresolved_alerts = conn.execute(
-            text(
-                """
-                SELECT ts, type, severity, title, details
-                FROM alerts
-                WHERE user_id = :user_id
-                  AND server_id = :server_id
-                  AND is_resolved = false
-                ORDER BY ts DESC
-                LIMIT 20
-                """
-            ),
-            {"user_id": str(user_id), "server_id": str(server_id)},
-        ).mappings().all()
+    snapshot = packet.get("metrics_snapshot") if isinstance(packet.get("metrics_snapshot"), dict) else {}
+    metrics = [snapshot] if snapshot else []
 
-        recent_alerts = conn.execute(
-            text(
-                """
-                SELECT ts, type, severity, title, details, is_resolved, resolved_at
-                FROM alerts
-                WHERE user_id = :user_id
-                  AND server_id = :server_id
-                ORDER BY ts DESC
-                LIMIT 40
-                """
-            ),
-            {"user_id": str(user_id), "server_id": str(server_id)},
-        ).mappings().all()
-
-        recent_logs = conn.execute(
-            text(
-                """
-                SELECT ts, source, level, message
-                FROM logs
-                WHERE server_id = :server_id
-                  AND level IN ('warn', 'error')
-                ORDER BY ts DESC
-                LIMIT 80
-                """
-            ),
-            {"server_id": str(server_id)},
-        ).mappings().all()
-
-        uptime_rows = conn.execute(
-            text(
-                """
-                SELECT id, name, url, last_status, last_response_time_ms, consecutive_failures, last_checked_at
-                FROM uptime_monitors
-                WHERE user_id = :user_id
-                ORDER BY created_at DESC
-                LIMIT 20
-                """
-            ),
-            {"user_id": str(user_id)},
-        ).mappings().all()
-
-    metadata = _normalize_json(server.get("metadata")) or {}
-    if not isinstance(metadata, dict):
-        metadata = {"raw": metadata}
-
-    metrics = [dict(row) for row in reversed(metrics_rows)]
-    unresolved = [
-        {**dict(row), "details": _normalize_json(row.get("details"))}
-        for row in unresolved_alerts
-    ]
-    recent = [
-        {**dict(row), "details": _normalize_json(row.get("details"))}
-        for row in recent_alerts
-    ]
-    logs = [dict(row) for row in recent_logs]
-    uptime = [dict(row) for row in uptime_rows]
+    server = packet.get("server") if isinstance(packet.get("server"), dict) else {}
+    identity = packet.get("identity") if isinstance(packet.get("identity"), dict) else {}
+    capabilities = (
+        packet.get("agent_capabilities")
+        if isinstance(packet.get("agent_capabilities"), dict)
+        else {}
+    )
 
     return {
         "server": {
-            "id": str(server["id"]),
-            "name": server["name"],
-            "status": server["status"],
-            "last_seen_at": server["last_seen_at"],
-            "created_at": server["created_at"],
-            "metadata": metadata,
+            "id": str(server.get("id") or server_id),
+            "name": server.get("name"),
+            "status": server.get("status"),
+            "last_seen_at": server.get("last_seen_at"),
+            "created_at": server.get("created_at"),
+            "metadata": {
+                "host": identity,
+                "agent_capabilities": capabilities,
+            },
         },
         "metrics": metrics,
         "alerts": {
-            "unresolved_count": len(unresolved),
-            "recent_count": len(recent),
-            "unresolved": unresolved[:20],
-            "recent": recent[:30],
+            "unresolved_count": len(unresolved_alerts),
+            "recent_count": len(recent_alerts),
+            "unresolved": unresolved_alerts[:20],
+            "recent": recent_alerts[:30],
         },
-        "logs": logs[:60],
-        "uptime_monitors": uptime,
+        "logs": flat_logs[:80],
+        "uptime_monitors": [],
+        "troubleshooting_packet": packet,
     }
 
 
@@ -268,6 +205,9 @@ def _build_system_prompt() -> str:
         "- Prefer reversible, low-risk steps first and include verification after each major step.\n"
         "- If a component has no evidence (for example no docker symptoms), do not force docker fixes.\n"
         "- Use concrete values/timestamps from context when available (CPU, RAM, disk, alert type, log lines, status).\n"
+        "- Do not suggest destructive commands by default (no `rm -rf`, data deletion, dropping databases, or force resets).\n"
+        "- Do not ask user to disable firewall or run untrusted `curl | bash` commands.\n"
+        "- For config-changing suggestions, always include rollback notes.\n"
         "- Reply in the same language used by the user.\n\n"
         "Reasoning style:\n"
         "- Build a hypothesis tree, rank top causes by likelihood, then propose checks that disambiguate causes.\n"

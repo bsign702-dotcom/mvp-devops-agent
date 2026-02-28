@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sys
 import time
 from datetime import datetime, timezone
@@ -24,15 +25,32 @@ from .alerts import (
 from .db import ensure_migrated, get_engine, wait_for_db
 from .errors import APIError, install_error_handlers
 from .models import (
+    AgentSelfCheckRequest,
+    AgentSelfCheckResponse,
     AlertItem,
     ChatAskResponse,
     ChatMessageCreateRequest,
     ChatMessageItem,
     ChatSessionCreateRequest,
     ChatSessionItem,
+    ComposeLintRequest,
+    LintResponse,
+    LogSearchResponse,
+    MetricsHistoryResponse,
+    NginxLintRequest,
     HealthResponse,
     IngestRequest,
     IngestResponse,
+    PreflightCreateRequest,
+    PreflightCreateResponse,
+    PreflightResultsRequest,
+    PreflightResultsResponse,
+    ProjectTemplateDetail,
+    ProjectTemplateItem,
+    ProvisionPlanCreateRequest,
+    ProvisionPlanResponse,
+    StackDetailResponse,
+    StackItem,
     MetricSummary,
     NotificationSettingItem,
     NotificationSettingUpsertRequest,
@@ -44,6 +62,8 @@ from .models import (
     ServerDetailResponse,
     ServerLogItem,
     ServerListItem,
+    TimelineResponse,
+    TroubleshootingPacketResponse,
     UptimeCheckItem,
     UptimeMonitorCreateRequest,
     UptimeMonitorDeleteResponse,
@@ -60,6 +80,25 @@ from .services.chat_service import (
     create_chat_session as svc_create_chat_session,
     list_chat_messages as svc_list_chat_messages,
     list_chat_sessions as svc_list_chat_sessions,
+)
+from .services.foundation_service import (
+    build_log_fingerprint,
+    build_troubleshooting_packet,
+    create_preflight_run,
+    create_provision_plan,
+    get_agent_install_config,
+    get_metrics_history,
+    get_provision_plan,
+    get_stack,
+    get_template,
+    get_timeline,
+    lint_compose_yaml,
+    lint_nginx_conf,
+    list_stacks,
+    list_templates,
+    search_server_logs,
+    submit_preflight_results,
+    upsert_agent_self_check,
 )
 from .services.notification_service import (
     list_notification_settings as svc_list_notification_settings,
@@ -198,6 +237,192 @@ def auth_me(current_user: AuthenticatedUser = Depends(require_authenticated_user
     )
 
 
+@app.get("/v1/stacks", response_model=list[StackItem])
+def get_stacks(_: AuthenticatedUser = Depends(require_authenticated_user)) -> list[StackItem]:
+    return [StackItem(**row) for row in list_stacks()]
+
+
+@app.get("/v1/stacks/{stack_id}", response_model=StackDetailResponse)
+def get_stack_by_id(
+    stack_id: str,
+    _: AuthenticatedUser = Depends(require_authenticated_user),
+) -> StackDetailResponse:
+    return StackDetailResponse(**get_stack(stack_id))
+
+
+@app.post("/v1/servers/{server_id}/provision-plan", response_model=ProvisionPlanResponse)
+def create_server_provision_plan(
+    server_id: UUID,
+    payload: ProvisionPlanCreateRequest,
+    current_user: AuthenticatedUser = Depends(require_authenticated_user),
+) -> ProvisionPlanResponse:
+    row = create_provision_plan(
+        user_id=current_user.local_user_id,
+        server_id=server_id,
+        stack_id=payload.stack_id,
+        inputs=payload.inputs,
+    )
+    return ProvisionPlanResponse(**row)
+
+
+@app.get("/v1/provision-plans/{plan_id}", response_model=ProvisionPlanResponse)
+def get_server_provision_plan(
+    plan_id: UUID,
+    current_user: AuthenticatedUser = Depends(require_authenticated_user),
+) -> ProvisionPlanResponse:
+    row = get_provision_plan(user_id=current_user.local_user_id, plan_id=plan_id)
+    return ProvisionPlanResponse(**row)
+
+
+@app.post("/v1/servers/{server_id}/preflight", response_model=PreflightCreateResponse)
+def create_server_preflight(
+    server_id: UUID,
+    payload: PreflightCreateRequest,
+    current_user: AuthenticatedUser = Depends(require_authenticated_user),
+) -> PreflightCreateResponse:
+    row = create_preflight_run(
+        user_id=current_user.local_user_id,
+        server_id=server_id,
+        stack_id=payload.stack_id,
+        inputs=payload.inputs,
+    )
+    return PreflightCreateResponse(**row)
+
+
+@app.post("/v1/servers/{server_id}/preflight/results", response_model=PreflightResultsResponse)
+def submit_server_preflight_results(
+    server_id: UUID,
+    payload: PreflightResultsRequest,
+    current_user: AuthenticatedUser = Depends(require_authenticated_user),
+) -> PreflightResultsResponse:
+    row = submit_preflight_results(
+        user_id=current_user.local_user_id,
+        server_id=server_id,
+        run_id=payload.run_id,
+        results=payload.results,
+    )
+    return PreflightResultsResponse(**row)
+
+
+@app.get("/v1/templates", response_model=list[ProjectTemplateItem])
+def get_project_templates(
+    _: AuthenticatedUser = Depends(require_authenticated_user),
+) -> list[ProjectTemplateItem]:
+    return [ProjectTemplateItem(**row) for row in list_templates()]
+
+
+@app.get("/v1/templates/{template_id}", response_model=ProjectTemplateDetail)
+def get_project_template(
+    template_id: str,
+    _: AuthenticatedUser = Depends(require_authenticated_user),
+) -> ProjectTemplateDetail:
+    return ProjectTemplateDetail(**get_template(template_id))
+
+
+@app.post("/v1/validate/docker-compose", response_model=LintResponse)
+def validate_compose(
+    payload: ComposeLintRequest,
+    _: AuthenticatedUser = Depends(require_authenticated_user),
+) -> LintResponse:
+    return LintResponse(**lint_compose_yaml(payload.yaml))
+
+
+@app.post("/v1/validate/nginx", response_model=LintResponse)
+def validate_nginx(
+    payload: NginxLintRequest,
+    _: AuthenticatedUser = Depends(require_authenticated_user),
+) -> LintResponse:
+    return LintResponse(**lint_nginx_conf(payload.conf))
+
+
+@app.get("/v1/servers/{server_id}/logs", response_model=LogSearchResponse)
+def get_server_logs(
+    server_id: UUID,
+    source: str | None = Query(default=None),
+    level: str | None = Query(default=None),
+    q: str | None = Query(default=None),
+    since: datetime | None = Query(default=None),
+    until: datetime | None = Query(default=None),
+    limit: int = Query(default=200, ge=1, le=1000),
+    current_user: AuthenticatedUser = Depends(require_authenticated_user),
+) -> LogSearchResponse:
+    row = search_server_logs(
+        user_id=current_user.local_user_id,
+        server_id=server_id,
+        source=source,
+        level=level,
+        query=q,
+        since=since,
+        until=until,
+        limit=limit,
+    )
+    return LogSearchResponse(**row)
+
+
+@app.get("/v1/servers/{server_id}/metrics", response_model=MetricsHistoryResponse)
+def get_server_metrics_history(
+    server_id: UUID,
+    since: datetime | None = Query(default=None),
+    until: datetime | None = Query(default=None),
+    bucket: str = Query(default="5m"),
+    current_user: AuthenticatedUser = Depends(require_authenticated_user),
+) -> MetricsHistoryResponse:
+    row = get_metrics_history(
+        user_id=current_user.local_user_id,
+        server_id=server_id,
+        since=since,
+        until=until,
+        bucket=bucket,
+    )
+    return MetricsHistoryResponse(**row)
+
+
+@app.get("/v1/servers/{server_id}/timeline", response_model=TimelineResponse)
+def get_server_timeline(
+    server_id: UUID,
+    since: datetime | None = Query(default=None),
+    until: datetime | None = Query(default=None),
+    current_user: AuthenticatedUser = Depends(require_authenticated_user),
+) -> TimelineResponse:
+    row = get_timeline(
+        user_id=current_user.local_user_id,
+        server_id=server_id,
+        since=since,
+        until=until,
+    )
+    return TimelineResponse(**row)
+
+
+@app.get("/v1/servers/{server_id}/troubleshooting-packet", response_model=TroubleshootingPacketResponse)
+def get_server_troubleshooting_packet(
+    server_id: UUID,
+    current_user: AuthenticatedUser = Depends(require_authenticated_user),
+) -> TroubleshootingPacketResponse:
+    return TroubleshootingPacketResponse(
+        **build_troubleshooting_packet(user_id=current_user.local_user_id, server_id=server_id)
+    )
+
+
+@app.post("/v1/agent/self-check", response_model=AgentSelfCheckResponse)
+def agent_self_check(payload: AgentSelfCheckRequest, request: Request) -> AgentSelfCheckResponse:
+    raw_token = _extract_bearer_token(request)
+    token_hash = hash_agent_token(raw_token, settings.agent_token_pepper)
+    rate_limiter.check(f"agent:{token_hash}", settings.agent_rate_limit_per_minute)
+    row = upsert_agent_self_check(token_hash=token_hash, payload=payload.model_dump())
+    return AgentSelfCheckResponse(**row)
+
+
+@app.get("/v1/agent/install-config")
+def agent_install_config(request: Request) -> dict[str, Any]:
+    raw_token = _extract_bearer_token(request)
+    token_hash = hash_agent_token(raw_token, settings.agent_token_pepper)
+    rate_limiter.check(f"agent:{token_hash}", settings.agent_rate_limit_per_minute)
+    return get_agent_install_config(
+        token_hash=token_hash,
+        default_image=settings.agent_default_image,
+    )
+
+
 @app.post("/v1/chat/sessions", response_model=ChatSessionItem)
 def create_chat_session(
     payload: ChatSessionCreateRequest,
@@ -260,8 +485,14 @@ def create_server(
         row = conn.execute(
             text(
                 """
-                INSERT INTO servers (user_id, name, agent_token_hash, status)
-                VALUES (:user_id, :name, :agent_token_hash, 'pending')
+                INSERT INTO servers (user_id, name, agent_token_hash, status, metadata)
+                VALUES (
+                    :user_id,
+                    :name,
+                    :agent_token_hash,
+                    'pending',
+                    CAST(:metadata AS jsonb)
+                )
                 RETURNING id, name
                 """
             ),
@@ -269,6 +500,10 @@ def create_server(
                 "user_id": str(current_user.local_user_id),
                 "name": payload.name,
                 "agent_token_hash": token_hash,
+                "metadata": json.dumps(
+                    {"agent_image": settings.agent_default_image},
+                    separators=(",", ":"),
+                ),
             },
         ).mappings().one()
 
@@ -380,6 +615,31 @@ def get_server(
             {"server_id": str(server_id)},
         ).mappings().all()
 
+        cap_row = conn.execute(
+            text(
+                """
+                SELECT supports_docker, supports_systemd, supports_journalctl, supports_nginx_logs,
+                       nginx_paths, docker_version, systemd_version, metadata, updated_at
+                FROM agent_capabilities
+                WHERE server_id = :server_id
+                """
+            ),
+            {"server_id": str(server_id)},
+        ).mappings().first()
+
+        hb_row = conn.execute(
+            text(
+                """
+                SELECT ts
+                FROM server_heartbeats
+                WHERE server_id = :server_id
+                ORDER BY ts DESC
+                LIMIT 1
+                """
+            ),
+            {"server_id": str(server_id)},
+        ).mappings().first()
+
     metadata = server.get("metadata") or {}
     if isinstance(metadata, str):
         metadata = json.loads(metadata)
@@ -405,6 +665,22 @@ def get_server(
         source = str(row.get("source") or "unknown")
         log_sources[source] = log_sources.get(source, 0) + 1
 
+    capabilities = dict(cap_row) if cap_row else {}
+    if capabilities:
+        capabilities["nginx_paths"] = [
+            str(x) for x in _normalize_json_field(capabilities.get("nginx_paths") or [])
+        ]
+        capabilities["metadata"] = _normalize_json_field(capabilities.get("metadata") or {})
+
+    last_heartbeat_at = hb_row["ts"] if hb_row else None
+    heartbeat_status = None
+    if last_heartbeat_at is not None:
+        heartbeat_status = (
+            "stale"
+            if (datetime.now(timezone.utc) - last_heartbeat_at).total_seconds() > settings.offline_after_seconds
+            else "ok"
+        )
+
     return ServerDetailResponse(
         server_id=server["server_id"],
         name=server["name"],
@@ -418,6 +694,9 @@ def get_server(
         docker_containers=docker_containers,
         log_sources=log_sources,
         recent_logs=[ServerLogItem(**row) for row in recent_logs_rows],
+        agent_capabilities=capabilities,
+        last_heartbeat_at=last_heartbeat_at,
+        heartbeat_status=heartbeat_status,
         last_metrics=MetricSummary(**dict(metric_row)) if metric_row else None,
         alerts=[_row_to_alert_item(row) for row in alert_rows],
     )
@@ -462,6 +741,43 @@ def _normalize_json_field(value: Any) -> Any:
         except json.JSONDecodeError:
             return value
     return value
+
+
+def _parse_log_service(source: str, message: str) -> str | None:
+    msg = (message or "").strip()
+    if not msg:
+        return None
+    match = re.match(r"^\[([^\]]+)\]", msg)
+    if match:
+        value = match.group(1).strip()
+        if value:
+            return value[:120]
+    source_name = (source or "").strip().lower()
+    if source_name in {"nginx", "docker", "systemd", "app"}:
+        return source_name
+    return None
+
+
+def _parse_log_tags(source: str, level: str, message: str) -> list[str]:
+    tags: list[str] = []
+    src = (source or "").strip().lower()
+    lvl = (level or "").strip().lower()
+    msg = (message or "").lower()
+    if src:
+        tags.append(f"source:{src}")
+    if lvl:
+        tags.append(f"level:{lvl}")
+    for token in ["timeout", "connection", "restart", "crash", "refused", "certificate", "ssl", "disk"]:
+        if token in msg:
+            tags.append(f"kw:{token}")
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for tag in tags:
+        if tag in seen:
+            continue
+        seen.add(tag)
+        deduped.append(tag)
+    return deduped[:20]
 
 
 def _row_to_alert_item(row: Any) -> AlertItem:
@@ -672,6 +988,31 @@ def ingest(payload: IngestRequest, request: Request) -> IngestResponse:
                 "net_bytes_recv": payload.metrics.net_bytes_recv,
             },
         )
+        conn.execute(
+            text(
+                """
+                INSERT INTO server_metrics (
+                    server_id, ts, cpu_percent, ram_percent, disk_percent,
+                    load1, load5, load15, net_bytes_sent, net_bytes_recv
+                ) VALUES (
+                    :server_id, :ts, :cpu_percent, :ram_percent, :disk_percent,
+                    :load1, :load5, :load15, :net_bytes_sent, :net_bytes_recv
+                )
+                """
+            ),
+            {
+                "server_id": str(server["id"]),
+                "ts": payload.ts,
+                "cpu_percent": payload.metrics.cpu_percent,
+                "ram_percent": payload.metrics.ram_percent,
+                "disk_percent": payload.metrics.disk_percent,
+                "load1": load_values[0],
+                "load5": load_values[1],
+                "load15": load_values[2],
+                "net_bytes_sent": payload.metrics.net_bytes_sent,
+                "net_bytes_recv": payload.metrics.net_bytes_recv,
+            },
+        )
 
         host_meta = payload.host.model_dump(exclude_none=True)
         host_ips = host_meta.get("ip_addresses")
@@ -714,6 +1055,19 @@ def ingest(payload: IngestRequest, request: Request) -> IngestResponse:
             ),
             {"server_id": str(server["id"]), "metadata_patch": json.dumps(metadata_patch)},
         )
+        conn.execute(
+            text(
+                """
+                INSERT INTO server_heartbeats (server_id, ts, source, metadata)
+                VALUES (:server_id, :ts, 'ingest', CAST(:metadata AS jsonb))
+                """
+            ),
+            {
+                "server_id": str(server["id"]),
+                "ts": payload.ts,
+                "metadata": json.dumps({"host": host_meta}, separators=(",", ":"), default=str),
+            },
+        )
         resolve_alert_type(conn, server["id"], "agent_offline")
 
         logs_inserted = 0
@@ -745,6 +1099,28 @@ def ingest(payload: IngestRequest, request: Request) -> IngestResponse:
                         "message": msg,
                     },
                 )
+                service_name = _parse_log_service("systemd", msg)
+                conn.execute(
+                    text(
+                        """
+                        INSERT INTO server_logs (
+                            server_id, ts, source, service, level, message, fingerprint, tags
+                        ) VALUES (
+                            :server_id, :ts, :source, :service, :level, :message, :fingerprint, CAST(:tags AS jsonb)
+                        )
+                        """
+                    ),
+                    {
+                        "server_id": str(server["id"]),
+                        "ts": payload.ts,
+                        "source": "systemd",
+                        "service": service_name,
+                        "level": level,
+                        "message": msg,
+                        "fingerprint": build_log_fingerprint("systemd", service_name, msg),
+                        "tags": json.dumps(_parse_log_tags("systemd", level, msg), separators=(",", ":")),
+                    },
+                )
                 logs_inserted += 1
                 systemd_inserted += 1
                 if is_service_restart_line(msg):
@@ -773,6 +1149,28 @@ def ingest(payload: IngestRequest, request: Request) -> IngestResponse:
                     "message": msg,
                 },
             )
+            service_name = _parse_log_service("nginx", msg)
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO server_logs (
+                        server_id, ts, source, service, level, message, fingerprint, tags
+                    ) VALUES (
+                        :server_id, :ts, :source, :service, :level, :message, :fingerprint, CAST(:tags AS jsonb)
+                    )
+                    """
+                ),
+                {
+                    "server_id": str(server["id"]),
+                    "ts": payload.ts,
+                    "source": "nginx",
+                    "service": service_name,
+                    "level": level,
+                    "message": msg,
+                    "fingerprint": build_log_fingerprint("nginx", service_name, msg),
+                    "tags": json.dumps(_parse_log_tags("nginx", level, msg), separators=(",", ":")),
+                },
+            )
             logs_inserted += 1
             nginx_inserted += 1
 
@@ -797,6 +1195,28 @@ def ingest(payload: IngestRequest, request: Request) -> IngestResponse:
                     "message": msg,
                 },
             )
+            service_name = _parse_log_service("docker", msg)
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO server_logs (
+                        server_id, ts, source, service, level, message, fingerprint, tags
+                    ) VALUES (
+                        :server_id, :ts, :source, :service, :level, :message, :fingerprint, CAST(:tags AS jsonb)
+                    )
+                    """
+                ),
+                {
+                    "server_id": str(server["id"]),
+                    "ts": payload.ts,
+                    "source": "docker",
+                    "service": service_name,
+                    "level": level,
+                    "message": msg,
+                    "fingerprint": build_log_fingerprint("docker", service_name, msg),
+                    "tags": json.dumps(_parse_log_tags("docker", level, msg), separators=(",", ":")),
+                },
+            )
             logs_inserted += 1
             docker_inserted += 1
 
@@ -809,14 +1229,19 @@ def ingest(payload: IngestRequest, request: Request) -> IngestResponse:
                 or docker_inserted >= max_docker_logs
             ):
                 break
+            action = "event"
+            name = "container"
+            event_payload: dict[str, Any]
             if isinstance(event, dict):
                 action = event.get("Action") or event.get("action") or event.get("status") or "event"
                 actor = event.get("Actor") if isinstance(event.get("Actor"), dict) else {}
                 attrs = actor.get("Attributes") if isinstance(actor.get("Attributes"), dict) else {}
                 name = attrs.get("name") or event.get("from") or "container"
                 msg = f"[event] {action} ({name})"
+                event_payload = event
             else:
                 msg = f"[event] {str(event)}"
+                event_payload = {"raw": str(event)}
             level = infer_log_level(msg)
             conn.execute(
                 text(
@@ -830,6 +1255,47 @@ def ingest(payload: IngestRequest, request: Request) -> IngestResponse:
                     "ts": payload.ts,
                     "level": level,
                     "message": msg,
+                },
+            )
+            service_name = _parse_log_service("docker", msg)
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO server_logs (
+                        server_id, ts, source, service, level, message, fingerprint, tags
+                    ) VALUES (
+                        :server_id, :ts, :source, :service, :level, :message, :fingerprint, CAST(:tags AS jsonb)
+                    )
+                    """
+                ),
+                {
+                    "server_id": str(server["id"]),
+                    "ts": payload.ts,
+                    "source": "docker",
+                    "service": service_name,
+                    "level": level,
+                    "message": msg,
+                    "fingerprint": build_log_fingerprint("docker", service_name, msg),
+                    "tags": json.dumps(_parse_log_tags("docker", level, msg), separators=(",", ":")),
+                },
+            )
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO server_events (server_id, ts, event_type, source, service, title, payload)
+                    VALUES (
+                        :server_id, :ts, :event_type, :source, :service, :title, CAST(:payload AS jsonb)
+                    )
+                    """
+                ),
+                {
+                    "server_id": str(server["id"]),
+                    "ts": payload.ts,
+                    "event_type": str(action),
+                    "source": "docker",
+                    "service": str(name),
+                    "title": msg[:180],
+                    "payload": json.dumps(event_payload, separators=(",", ":"), default=str),
                 },
             )
             logs_inserted += 1
