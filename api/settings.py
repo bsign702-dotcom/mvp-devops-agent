@@ -28,6 +28,13 @@ class Settings(BaseSettings):
     supabase_url: str | None = Field(default=None, alias="SUPABASE_URL")
     supabase_anon_key: str | None = Field(default=None, alias="SUPABASE_ANON_KEY")
     supabase_auth_timeout_sec: int = Field(10, alias="SUPABASE_AUTH_TIMEOUT_SEC")
+    llm_provider: str = Field("openai", alias="LLM_PROVIDER")
+    llm_model: str = Field("gpt-4.1-mini", alias="LLM_MODEL")
+    openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
+    openai_base_url: str = Field("https://api.openai.com/v1", alias="OPENAI_BASE_URL")
+    llm_timeout_sec: int = Field(45, alias="LLM_TIMEOUT_SEC")
+    llm_suggest_only: bool = Field(True, alias="LLM_SUGGEST_ONLY")
+    llm_max_context_chars: int = Field(12000, alias="LLM_MAX_CONTEXT_CHARS")
     admin_notify_emails: str = Field("", alias="ADMIN_NOTIFY_EMAILS")
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")

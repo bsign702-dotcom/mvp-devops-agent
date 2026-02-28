@@ -25,6 +25,11 @@ from .db import ensure_migrated, get_engine, wait_for_db
 from .errors import APIError, install_error_handlers
 from .models import (
     AlertItem,
+    ChatAskResponse,
+    ChatMessageCreateRequest,
+    ChatMessageItem,
+    ChatSessionCreateRequest,
+    ChatSessionItem,
     HealthResponse,
     IngestRequest,
     IngestResponse,
@@ -49,6 +54,12 @@ from .scheduler import start_scheduler, stop_scheduler
 from .security import generate_agent_token, hash_agent_token
 from .services.auth_service import AuthenticatedUser, require_authenticated_user
 from .services.admin_notify_service import notify_server_created
+from .services.chat_service import (
+    ask_chat_assistant as svc_ask_chat_assistant,
+    create_chat_session as svc_create_chat_session,
+    list_chat_messages as svc_list_chat_messages,
+    list_chat_sessions as svc_list_chat_sessions,
+)
 from .services.notification_service import (
     list_notification_settings as svc_list_notification_settings,
     send_test_email as svc_send_test_email,
@@ -184,6 +195,56 @@ def auth_me(current_user: AuthenticatedUser = Depends(require_authenticated_user
         full_name=current_user.full_name,
         metadata=current_user.metadata,
     )
+
+
+@app.post("/v1/chat/sessions", response_model=ChatSessionItem)
+def create_chat_session(
+    payload: ChatSessionCreateRequest,
+    current_user: AuthenticatedUser = Depends(require_authenticated_user),
+) -> ChatSessionItem:
+    row = svc_create_chat_session(
+        user_id=current_user.local_user_id,
+        server_id=payload.server_id,
+        title=payload.title,
+    )
+    return ChatSessionItem(**row)
+
+
+@app.get("/v1/chat/sessions", response_model=list[ChatSessionItem])
+def list_chat_sessions(
+    server_id: UUID | None = Query(default=None),
+    current_user: AuthenticatedUser = Depends(require_authenticated_user),
+) -> list[ChatSessionItem]:
+    rows = svc_list_chat_sessions(user_id=current_user.local_user_id, server_id=server_id)
+    return [ChatSessionItem(**row) for row in rows]
+
+
+@app.get("/v1/chat/sessions/{session_id}/messages", response_model=list[ChatMessageItem])
+def list_chat_session_messages(
+    session_id: UUID,
+    limit: int = Query(default=200, ge=1, le=500),
+    current_user: AuthenticatedUser = Depends(require_authenticated_user),
+) -> list[ChatMessageItem]:
+    rows = svc_list_chat_messages(
+        user_id=current_user.local_user_id,
+        session_id=session_id,
+        limit=limit,
+    )
+    return [ChatMessageItem(**row) for row in rows]
+
+
+@app.post("/v1/chat/sessions/{session_id}/messages", response_model=ChatAskResponse)
+def send_chat_session_message(
+    session_id: UUID,
+    payload: ChatMessageCreateRequest,
+    current_user: AuthenticatedUser = Depends(require_authenticated_user),
+) -> ChatAskResponse:
+    row = svc_ask_chat_assistant(
+        user_id=current_user.local_user_id,
+        session_id=session_id,
+        user_message=payload.message,
+    )
+    return ChatAskResponse(**row)
 
 
 @app.post("/v1/servers", response_model=ServerCreateResponse)

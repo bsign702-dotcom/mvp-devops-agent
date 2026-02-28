@@ -45,6 +45,10 @@
     {
       "key": "dailyReportTimeUtc",
       "value": "08:00"
+    },
+    {
+      "key": "chatSessionId",
+      "value": ""
     }
   ],
   "item": [
@@ -533,6 +537,157 @@
               ]
             },
             "description": "Delete an uptime monitor owned by current user (cascades checks/alerts)."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Chat Assistant",
+      "item": [
+        {
+          "name": "Create Chat Session",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code >= 200 && pm.response.code < 300) {",
+                  "  const data = pm.response.json();",
+                  "  if (data.id) pm.collectionVariables.set('chatSessionId', data.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{supabaseAccessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"server_id\": \"{{serverId}}\",\n  \"title\": \"Troubleshoot {{serverName}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/chat/sessions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "chat",
+                "sessions"
+              ]
+            },
+            "description": "Create a suggest-only chat session scoped to one server and store `chatSessionId`."
+          },
+          "response": []
+        },
+        {
+          "name": "List Chat Sessions",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{supabaseAccessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/chat/sessions?server_id={{serverId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "chat",
+                "sessions"
+              ],
+              "query": [
+                {
+                  "key": "server_id",
+                  "value": "{{serverId}}"
+                }
+              ]
+            },
+            "description": "List chat sessions for the current user (optionally by server)."
+          },
+          "response": []
+        },
+        {
+          "name": "Ask Assistant",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{supabaseAccessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"Nginx is returning 500 and CPU is high. Give me diagnosis and safe fix steps.\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/chat/sessions/{{chatSessionId}}/messages",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "chat",
+                "sessions",
+                "{{chatSessionId}}",
+                "messages"
+              ]
+            },
+            "description": "Send a troubleshooting question. Backend injects server context and returns assistant guidance."
+          },
+          "response": []
+        },
+        {
+          "name": "List Chat Messages",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{supabaseAccessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/chat/sessions/{{chatSessionId}}/messages?limit=200",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "chat",
+                "sessions",
+                "{{chatSessionId}}",
+                "messages"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "200"
+                }
+              ]
+            },
+            "description": "Fetch full message timeline for the chat session."
           },
           "response": []
         }

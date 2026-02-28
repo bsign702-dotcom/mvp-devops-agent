@@ -4,11 +4,13 @@ FastAPI + PostgreSQL backend with a simple Python agent and one-command Docker i
 
 ## Features
 
-- No user auth / no JWT / no Supabase
+- Supabase bearer auth with local `users` sync (multi-tenant ownership)
 - Per-server agent token (stored as HMAC-SHA256 hash only)
 - Metrics + logs ingestion
 - Deterministic alerts + dedupe
-- Offline detection with APScheduler background job
+- Uptime monitoring + SSL expiry checks
+- Notification emails (alerts, daily report, admin events)
+- DevOps troubleshooting chat (LLM suggest-only mode) with server context
 - Docker Compose local dev (`api` + `postgres`)
 
 ## Project Structure
@@ -104,12 +106,36 @@ Behavior:
 ## API Endpoints
 
 - `GET /health`
+- `GET /v1/auth/me`
 - `POST /v1/servers`
 - `GET /v1/servers`
 - `GET /v1/servers/{server_id}`
 - `DELETE /v1/servers/{server_id}`
 - `POST /v1/ingest` (requires `Authorization: Bearer <agent_token>`)
 - `GET /v1/alerts?server_id=<uuid>&resolved=<true|false>`
+- `POST /v1/uptime-monitors`
+- `GET /v1/uptime-monitors`
+- `GET /v1/uptime-monitors/{monitor_id}`
+- `GET /v1/uptime-monitors/{monitor_id}/checks`
+- `DELETE /v1/uptime-monitors/{monitor_id}`
+- `POST /v1/notifications/settings`
+- `GET /v1/notifications/settings`
+- `POST /v1/notifications/test-email`
+- `POST /v1/chat/sessions`
+- `GET /v1/chat/sessions`
+- `GET /v1/chat/sessions/{session_id}/messages`
+- `POST /v1/chat/sessions/{session_id}/messages`
+
+## LLM Config
+
+Set these env vars in `.env` / compose:
+
+- `LLM_PROVIDER=openai` (or `mock`)
+- `LLM_MODEL=gpt-4.1-mini` (or your preferred model)
+- `OPENAI_API_KEY=...`
+- `OPENAI_BASE_URL=https://api.openai.com/v1`
+- `LLM_TIMEOUT_SEC=45`
+- `LLM_SUGGEST_ONLY=true`
 
 ## Example Ingest Call (Manual)
 
@@ -166,7 +192,8 @@ If agent ingestion fails:
 
 ## Security / MVP Notes
 
-- No user authentication is implemented (intentionally for MVP)
+- API access is authenticated by Supabase bearer token for user endpoints
 - Ingestion is protected by per-server bearer tokens
 - Raw agent tokens are never stored in PostgreSQL (only HMAC-SHA256 hashes with server-side pepper)
 - Rate limiting is in-memory (per-IP and per-agent-token-hash)
+- LLM chat is suggest-only by default (no remote command execution)

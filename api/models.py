@@ -241,5 +241,58 @@ class AlertsListResponse(BaseModel):
     items: list[AlertItem]
 
 
+class ChatSessionCreateRequest(BaseModel):
+    server_id: UUID
+    title: str | None = Field(default=None, max_length=120)
+
+    @field_validator("title")
+    @classmethod
+    def _validate_title(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        if not stripped:
+            return None
+        return stripped
+
+
+class ChatSessionItem(BaseModel):
+    id: UUID
+    server_id: UUID
+    title: str
+    mode: Literal["suggest_only"]
+    created_at: datetime
+    updated_at: datetime
+    last_message_at: datetime | None = None
+
+
+class ChatMessageCreateRequest(BaseModel):
+    message: str = Field(..., min_length=1, max_length=8000)
+
+    @field_validator("message")
+    @classmethod
+    def _validate_message(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("message is required")
+        return stripped
+
+
+class ChatMessageItem(BaseModel):
+    id: int
+    session_id: UUID
+    role: Literal["user", "assistant", "system"]
+    content: str
+    created_at: datetime
+
+
+class ChatAskResponse(BaseModel):
+    session_id: UUID
+    mode: Literal["suggest_only"]
+    model: str
+    user_message: ChatMessageItem
+    assistant_message: ChatMessageItem
+
+
 class HealthResponse(BaseModel):
     status: Literal["ok"]
