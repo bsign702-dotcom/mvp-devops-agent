@@ -11,6 +11,7 @@ TOKEN=""
 API=""
 DOCKER_SOCK_PATH="${DOCKER_SOCK_PATH:-}"
 IMAGE_PINNED=0
+AGENT_SKIP_PULL="${AGENT_SKIP_PULL:-0}"
 
 # If AGENT_IMAGE was provided via env (different from default), keep it and do not override from API.
 if [[ "$AGENT_IMAGE" != "$DEFAULT_AGENT_IMAGE" ]]; then
@@ -28,12 +29,14 @@ Optional env vars before running:
   INTERVAL_SEC (default: $INTERVAL_SEC)
   SYSTEMD_UNITS (default: $SYSTEMD_UNITS)
   AGENT_TAGS (default: empty)
+  AGENT_SKIP_PULL (default: $AGENT_SKIP_PULL, set 1 to skip docker pull)
 Optional flags:
   --name <container_name>
   --units <comma_separated_units>
   --interval <seconds>
   --tags <k=v,k2=v2>
   --image <image:tag>
+  --no-pull
 USAGE
 }
 
@@ -76,6 +79,10 @@ parse_args() {
         IMAGE_PINNED=1
         shift 2
         ;;
+      --no-pull)
+        AGENT_SKIP_PULL=1
+        shift
+        ;;
       -h|--help)
         usage
         exit 0
@@ -111,6 +118,11 @@ fetch_agent_image_from_api() {
   if [[ -n "$discovered" ]]; then
     AGENT_IMAGE="$discovered"
   fi
+}
+
+is_local_image_reference() {
+  local ref="$1"
+  [[ "$ref" != */* ]]
 }
 
 warn_if_localhost_api() {
@@ -205,15 +217,32 @@ restart_agent_container() {
     docker rm "$CONTAINER_NAME" >/dev/null 2>&1 || true
   fi
 
-  echo "Pulling agent image: $AGENT_IMAGE"
-  if ! docker pull "$AGENT_IMAGE"; then
-    if docker image inspect "$AGENT_IMAGE" >/dev/null 2>&1; then
-      echo "Image pull failed, but local image exists. Continuing with local image: $AGENT_IMAGE"
-    else
-      echo "Failed to pull agent image: $AGENT_IMAGE" >&2
-      echo "No local fallback image found. Provide --image or configure backend /v1/agent/install-config." >&2
+  local should_pull=1
+  if [[ "$AGENT_SKIP_PULL" == "1" ]]; then
+    should_pull=0
+  elif is_local_image_reference "$AGENT_IMAGE"; then
+    should_pull=0
+  fi
+
+  if [[ "$should_pull" == "1" ]]; then
+    echo "Pulling agent image: $AGENT_IMAGE"
+    if ! docker pull "$AGENT_IMAGE"; then
+      if docker image inspect "$AGENT_IMAGE" >/dev/null 2>&1; then
+        echo "Image pull failed, but local image exists. Continuing with local image: $AGENT_IMAGE"
+      else
+        echo "Failed to pull agent image: $AGENT_IMAGE" >&2
+        echo "No local fallback image found. Provide --image or configure backend /v1/agent/install-config." >&2
+        exit 1
+      fi
+    fi
+  else
+    echo "Skipping docker pull for image: $AGENT_IMAGE"
+    if ! docker image inspect "$AGENT_IMAGE" >/dev/null 2>&1; then
+      echo "Local image not found: $AGENT_IMAGE" >&2
+      echo "Build it first (docker build -t $AGENT_IMAGE -f agent/Dockerfile .) or remove --no-pull." >&2
       exit 1
     fi
+    echo "Using local image: $AGENT_IMAGE"
   fi
 
   echo "Starting agent container..."
