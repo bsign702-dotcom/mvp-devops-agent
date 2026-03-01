@@ -132,6 +132,7 @@ def _get_recent_conversation(*, session_id: UUID, limit: int = 20) -> list[dict[
 
 
 def _build_server_context(*, user_id: UUID, server_id: UUID) -> dict[str, Any]:
+    settings = get_settings()
     packet = build_chat_context_packet(user_id=user_id, server_id=server_id)
     recent_alerts = packet.get("alerts") if isinstance(packet.get("alerts"), list) else []
     unresolved_alerts = [a for a in recent_alerts if not bool(a.get("is_resolved"))]
@@ -152,6 +153,10 @@ def _build_server_context(*, user_id: UUID, server_id: UUID) -> dict[str, Any]:
                     "message": row.get("message", ""),
                 }
             )
+    flat_logs.sort(key=lambda item: str(item.get("ts") or ""), reverse=True)
+    log_limit = max(1, int(settings.chat_context_logs_total_limit))
+
+    docker_containers = packet.get("docker_containers") if isinstance(packet.get("docker_containers"), list) else []
 
     snapshot = packet.get("metrics_snapshot") if isinstance(packet.get("metrics_snapshot"), dict) else {}
     metrics = [snapshot] if snapshot else []
@@ -173,6 +178,7 @@ def _build_server_context(*, user_id: UUID, server_id: UUID) -> dict[str, Any]:
             "created_at": server.get("created_at"),
             "metadata": {
                 "host": identity,
+                "docker_containers": docker_containers,
                 "agent_capabilities": capabilities,
             },
         },
@@ -183,7 +189,7 @@ def _build_server_context(*, user_id: UUID, server_id: UUID) -> dict[str, Any]:
             "unresolved": unresolved_alerts[:20],
             "recent": recent_alerts[:30],
         },
-        "logs": flat_logs[:80],
+        "logs": flat_logs[:log_limit],
         "uptime_monitors": [],
         "troubleshooting_packet": packet,
     }

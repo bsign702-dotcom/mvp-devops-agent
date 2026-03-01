@@ -503,6 +503,7 @@ class TroubleshootingPacketResponse(BaseModel):
     metric_trend: dict[str, Any] = Field(default_factory=dict)
     recent_alerts: list[dict[str, Any]] = Field(default_factory=list)
     recent_logs: dict[str, list[dict[str, Any]]] = Field(default_factory=dict)
+    docker_containers: list[dict[str, Any]] = Field(default_factory=list)
     recent_docker_events: list[dict[str, Any]] = Field(default_factory=list)
     recent_provision_plans: list[dict[str, Any]] = Field(default_factory=list)
     agent_capabilities: dict[str, Any] = Field(default_factory=dict)

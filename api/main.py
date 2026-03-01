@@ -1038,7 +1038,9 @@ def ingest(payload: IngestRequest, request: Request) -> IngestResponse:
                     "name": container.name,
                     "status": container.status,
                 }
-                for container in (payload.docker.containers or [])[:30]
+                for container in (payload.docker.containers or [])[
+                    : max(1, int(settings.ingest_docker_containers_limit))
+                ]
             ],
             "docker_event_count": len(payload.docker.events or []),
             "last_ingest_ts": payload.ts.isoformat(),

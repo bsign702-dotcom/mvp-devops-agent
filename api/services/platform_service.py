@@ -13,6 +13,7 @@ from sqlalchemy.engine import Connection
 
 from ..db import get_engine
 from ..errors import APIError
+from ..settings import get_settings
 
 _ALLOWED_LOG_LEVELS = {"info", "warn", "error", "unknown"}
 _ALLOWED_LOG_SOURCES = {"systemd", "nginx", "docker", "app", "unknown"}
@@ -35,6 +36,46 @@ def _as_dict(value: Any) -> dict[str, Any]:
 def _as_list(value: Any) -> list[Any]:
     value = _normalize_json(value)
     return value if isinstance(value, list) else []
+
+
+def _log_ts_sort_key(item: dict[str, Any]) -> datetime:
+    raw = item.get("ts")
+    if isinstance(raw, datetime):
+        return raw
+    if isinstance(raw, str):
+        try:
+            value = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            if value.tzinfo is None:
+                return value.replace(tzinfo=timezone.utc)
+            return value
+        except ValueError:
+            return datetime.min.replace(tzinfo=timezone.utc)
+    return datetime.min.replace(tzinfo=timezone.utc)
+
+
+def _limit_logs_by_source_for_chat(
+    logs_by_source: dict[str, list[dict[str, Any]]],
+    *,
+    per_source_limit: int,
+    total_limit: int,
+) -> dict[str, list[dict[str, Any]]]:
+    per_source_limit = max(1, int(per_source_limit))
+    total_limit = max(1, int(total_limit))
+
+    selected_by_source: dict[str, list[dict[str, Any]]] = {}
+    merged: list[dict[str, Any]] = []
+    for source, rows in logs_by_source.items():
+        clean_rows = [dict(row) for row in rows[:per_source_limit] if isinstance(row, dict)]
+        selected_by_source[source] = clean_rows
+        merged.extend(clean_rows)
+
+    merged.sort(key=_log_ts_sort_key, reverse=True)
+    allowed = {id(item) for item in merged[:total_limit]}
+
+    limited: dict[str, list[dict[str, Any]]] = {}
+    for source, rows in selected_by_source.items():
+        limited[source] = [row for row in rows if id(row) in allowed]
+    return limited
 
 
 def _validate_server_owner(conn: Connection, *, user_id: UUID, server_id: UUID) -> dict[str, Any]:
@@ -914,13 +955,23 @@ def get_timeline(
 
 
 def build_troubleshooting_packet(*, user_id: UUID, server_id: UUID) -> dict[str, Any]:
+    settings = get_settings()
     now = datetime.now(timezone.utc)
-    since_24h = now - timedelta(hours=24)
+    since_lookback = now - timedelta(hours=max(1, int(settings.chat_context_hours_back)))
+    alerts_limit = max(1, int(settings.chat_context_alerts_limit))
+    logs_per_source_limit = max(1, int(settings.chat_context_logs_per_source_limit))
+    docker_events_limit = max(1, int(settings.chat_context_docker_events_limit))
+    containers_limit = max(1, int(settings.chat_context_containers_limit))
 
     with get_engine().connect() as conn:
         server = _validate_server_owner(conn, user_id=user_id, server_id=server_id)
         metadata = _as_dict(server.get("metadata"))
         host = _as_dict(metadata.get("host"))
+        docker_containers = [
+            _as_dict(item)
+            for item in _as_list(metadata.get("docker_containers"))
+            if isinstance(item, dict)
+        ][:containers_limit]
 
         latest_metric = conn.execute(
             text(
@@ -959,26 +1010,40 @@ def build_troubleshooting_packet(*, user_id: UUID, server_id: UUID) -> dict[str,
                 FROM alerts
                 WHERE server_id = :server_id
                 ORDER BY ts DESC
-                LIMIT 30
+                LIMIT :limit
                 """
             ),
-            {"server_id": str(server_id)},
+            {"server_id": str(server_id), "limit": alerts_limit},
         ).mappings().all()
 
-        logs_rows = conn.execute(
-            text(
-                """
-                SELECT id, ts, source, service, level, message, fingerprint
-                FROM server_logs
-                WHERE server_id = :server_id
-                  AND ts >= :since
-                  AND level IN ('warn', 'error')
-                ORDER BY ts DESC
-                LIMIT 120
-                """
-            ),
-            {"server_id": str(server_id), "since": since_24h},
-        ).mappings().all()
+        logs_by_source: dict[str, list[dict[str, Any]]] = {
+            "systemd": [],
+            "nginx": [],
+            "docker": [],
+            "app": [],
+            "unknown": [],
+        }
+        for source_name in ("systemd", "nginx", "docker", "app", "unknown"):
+            rows = conn.execute(
+                text(
+                    """
+                    SELECT id, ts, source, service, level, message, fingerprint
+                    FROM server_logs
+                    WHERE server_id = :server_id
+                      AND ts >= :since
+                      AND source = :source
+                    ORDER BY ts DESC
+                    LIMIT :limit
+                    """
+                ),
+                {
+                    "server_id": str(server_id),
+                    "since": since_lookback,
+                    "source": source_name,
+                    "limit": logs_per_source_limit,
+                },
+            ).mappings().all()
+            logs_by_source[source_name] = [dict(row) for row in rows]
 
         docker_event_rows = conn.execute(
             text(
@@ -988,10 +1053,10 @@ def build_troubleshooting_packet(*, user_id: UUID, server_id: UUID) -> dict[str,
                 WHERE server_id = :server_id
                   AND source = 'docker'
                 ORDER BY ts DESC
-                LIMIT 80
+                LIMIT :limit
                 """
             ),
-            {"server_id": str(server_id)},
+            {"server_id": str(server_id), "limit": docker_events_limit},
         ).mappings().all()
 
         plan_rows = conn.execute(
@@ -1020,14 +1085,6 @@ def build_troubleshooting_packet(*, user_id: UUID, server_id: UUID) -> dict[str,
             {"server_id": str(server_id)},
         ).mappings().first()
 
-    by_source: dict[str, list[dict[str, Any]]] = {"systemd": [], "nginx": [], "docker": [], "app": []}
-    for row in logs_rows:
-        item = dict(row)
-        src = str(item.get("source") or "unknown")
-        if src not in by_source:
-            by_source[src] = []
-        by_source[src].append(item)
-
     return {
         "server": {
             "id": str(server["id"]),
@@ -1048,7 +1105,8 @@ def build_troubleshooting_packet(*, user_id: UUID, server_id: UUID) -> dict[str,
             {**dict(row), "details": _as_dict(row.get("details"))}
             for row in recent_alerts
         ],
-        "recent_logs": by_source,
+        "recent_logs": logs_by_source,
+        "docker_containers": docker_containers,
         "recent_docker_events": [
             {**dict(row), "payload": _as_dict(row.get("payload"))}
             for row in docker_event_rows
@@ -1071,15 +1129,32 @@ def build_troubleshooting_packet(*, user_id: UUID, server_id: UUID) -> dict[str,
 
 
 def build_chat_context_packet(*, user_id: UUID, server_id: UUID) -> dict[str, Any]:
+    settings = get_settings()
     packet = build_troubleshooting_packet(user_id=user_id, server_id=server_id)
+    logs = packet.get("recent_logs") if isinstance(packet.get("recent_logs"), dict) else {}
+    limited_logs = _limit_logs_by_source_for_chat(
+        {str(k): _as_list(v) for k, v in logs.items()},
+        per_source_limit=max(1, int(settings.chat_context_logs_per_source_limit)),
+        total_limit=max(1, int(settings.chat_context_logs_total_limit)),
+    )
+
+    docker_containers = [
+        _as_dict(item)
+        for item in _as_list(packet.get("docker_containers"))
+        if isinstance(item, dict)
+    ][: max(1, int(settings.chat_context_containers_limit))]
+
     return {
         "server": packet.get("server", {}),
         "identity": packet.get("identity", {}),
         "metrics_snapshot": packet.get("metrics_snapshot", {}),
         "metric_trend": packet.get("metric_trend", {}),
-        "alerts": packet.get("recent_alerts", [])[:20],
-        "logs": packet.get("recent_logs", {}),
-        "docker_events": packet.get("recent_docker_events", [])[:40],
+        "alerts": _as_list(packet.get("recent_alerts"))[: max(1, int(settings.chat_context_alerts_limit))],
+        "logs": limited_logs,
+        "docker_containers": docker_containers,
+        "docker_events": _as_list(packet.get("recent_docker_events"))[
+            : max(1, int(settings.chat_context_docker_events_limit))
+        ],
         "recent_provision_plans": packet.get("recent_provision_plans", []),
         "agent_capabilities": packet.get("agent_capabilities", {}),
     }

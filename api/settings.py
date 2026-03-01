@@ -35,6 +35,13 @@ class Settings(BaseSettings):
     llm_timeout_sec: int = Field(45, alias="LLM_TIMEOUT_SEC")
     llm_suggest_only: bool = Field(True, alias="LLM_SUGGEST_ONLY")
     llm_max_context_chars: int = Field(12000, alias="LLM_MAX_CONTEXT_CHARS")
+    chat_context_hours_back: int = Field(24, alias="CHAT_CONTEXT_HOURS_BACK")
+    chat_context_logs_per_source_limit: int = Field(200, alias="CHAT_CONTEXT_LOGS_PER_SOURCE_LIMIT")
+    chat_context_logs_total_limit: int = Field(500, alias="CHAT_CONTEXT_LOGS_TOTAL_LIMIT")
+    chat_context_alerts_limit: int = Field(40, alias="CHAT_CONTEXT_ALERTS_LIMIT")
+    chat_context_docker_events_limit: int = Field(120, alias="CHAT_CONTEXT_DOCKER_EVENTS_LIMIT")
+    chat_context_containers_limit: int = Field(100, alias="CHAT_CONTEXT_CONTAINERS_LIMIT")
+    ingest_docker_containers_limit: int = Field(200, alias="INGEST_DOCKER_CONTAINERS_LIMIT")
     admin_notify_emails: str = Field("", alias="ADMIN_NOTIFY_EMAILS")
     agent_default_image: str = Field("devops-agent:latest", alias="AGENT_DEFAULT_IMAGE")
 

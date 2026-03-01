@@ -43,7 +43,7 @@ def _mock_reply(*, user_prompt: str, context: dict[str, Any]) -> str:
     unresolved_alerts = _to_list(alerts.get("unresolved"))
     logs = _to_list(context.get("logs"))
     uptime_monitors = _to_list(context.get("uptime_monitors"))
-    docker_containers = _to_list(metadata.get("docker_containers"))
+    docker_containers = _to_list(metadata.get("docker_containers")) or _to_list(context.get("docker_containers"))
 
     cpu = latest_metric.get("cpu_percent")
     ram = latest_metric.get("ram_percent")
