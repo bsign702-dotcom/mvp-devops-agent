@@ -43,7 +43,7 @@ class Settings(BaseSettings):
     chat_context_containers_limit: int = Field(100, alias="CHAT_CONTEXT_CONTAINERS_LIMIT")
     ingest_docker_containers_limit: int = Field(200, alias="INGEST_DOCKER_CONTAINERS_LIMIT")
     admin_notify_emails: str = Field("", alias="ADMIN_NOTIFY_EMAILS")
-    agent_default_image: str = Field("devops-agent:latest", alias="AGENT_DEFAULT_IMAGE")
+    agent_default_image: str = Field("bsign/devops-agent:latest", alias="AGENT_DEFAULT_IMAGE")
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

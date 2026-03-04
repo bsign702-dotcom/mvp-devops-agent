@@ -238,11 +238,17 @@ restart_agent_container() {
   else
     echo "Skipping docker pull for image: $AGENT_IMAGE"
     if ! docker image inspect "$AGENT_IMAGE" >/dev/null 2>&1; then
-      echo "Local image not found: $AGENT_IMAGE" >&2
-      echo "Build it first (docker build -t $AGENT_IMAGE -f agent/Dockerfile .) or remove --no-pull." >&2
-      exit 1
+      echo "Local image not found: $AGENT_IMAGE — attempting pull as fallback..."
+      if docker pull "$AGENT_IMAGE" 2>/dev/null; then
+        echo "Successfully pulled image: $AGENT_IMAGE"
+      else
+        echo "Local image not found and pull failed: $AGENT_IMAGE" >&2
+        echo "Build it first (docker build -t $AGENT_IMAGE -f agent/Dockerfile .) or provide a pullable --image." >&2
+        exit 1
+      fi
+    else
+      echo "Using local image: $AGENT_IMAGE"
     fi
-    echo "Using local image: $AGENT_IMAGE"
   fi
 
   echo "Starting agent container..."
