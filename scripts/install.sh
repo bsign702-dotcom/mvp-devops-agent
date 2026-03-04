@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DEFAULT_AGENT_IMAGE="devops-agent:latest"
+DEFAULT_AGENT_IMAGE="bsign/devops-agent:latest"
 AGENT_IMAGE="${AGENT_IMAGE:-$DEFAULT_AGENT_IMAGE}"
 CONTAINER_NAME="${AGENT_NAME:-devops-agent}"
 INTERVAL_SEC="${INTERVAL_SEC:-15}"
