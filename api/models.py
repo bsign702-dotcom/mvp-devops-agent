@@ -631,3 +631,27 @@ class EventAlertRuleItem(BaseModel):
 class EventAlertRuleDeleteResponse(BaseModel):
     ok: bool = True
     id: UUID
+
+
+# ---------------------------------------------------------------------------
+# Event Catalog
+# ---------------------------------------------------------------------------
+
+
+class EventTypeItem(BaseModel):
+    event: str
+    label: str
+    severity: Literal["info", "warning", "error"]
+    description: str
+    suggested_source: str
+    suggested_meta: list[str] = Field(default_factory=list)
+
+
+class EventCategoryItem(BaseModel):
+    category: str
+    label: str
+    events: list[EventTypeItem]
+
+
+class EventCatalogResponse(BaseModel):
+    categories: list[EventCategoryItem]

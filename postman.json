@@ -65,6 +65,18 @@
     {
       "key": "preflightRunId",
       "value": ""
+    },
+    {
+      "key": "appKeyId",
+      "value": ""
+    },
+    {
+      "key": "appKey",
+      "value": ""
+    },
+    {
+      "key": "eventAlertRuleId",
+      "value": ""
     }
   ],
   "item": [
@@ -1476,6 +1488,332 @@
               ]
             },
             "description": "Send test email (requires SMTP configured on backend)."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "App Events",
+      "item": [
+        {
+          "name": "Create App Key",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code >= 200 && pm.response.code < 300) {",
+                  "  const data = pm.response.json();",
+                  "  if (data.id) pm.collectionVariables.set('appKeyId', data.id);",
+                  "  if (data.raw_key) pm.collectionVariables.set('appKey', data.raw_key);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{supabaseAccessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"auth-service-key\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/servers/{{serverId}}/app-keys",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "servers",
+                "{{serverId}}",
+                "app-keys"
+              ]
+            },
+            "description": "Create a new app key for a server. The raw_key is shown once — save it immediately."
+          },
+          "response": []
+        },
+        {
+          "name": "List App Keys",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{supabaseAccessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/servers/{{serverId}}/app-keys",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "servers",
+                "{{serverId}}",
+                "app-keys"
+              ]
+            },
+            "description": "List all app keys for a server (active and revoked)."
+          },
+          "response": []
+        },
+        {
+          "name": "Revoke App Key",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{supabaseAccessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/app-keys/{{appKeyId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "app-keys",
+                "{{appKeyId}}"
+              ]
+            },
+            "description": "Revoke an app key. Services using this key will immediately lose access."
+          },
+          "response": []
+        },
+        {
+          "name": "Ingest App Event",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{appKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source\": \"auth-service\",\n  \"event\": \"login_failed\",\n  \"severity\": \"warning\",\n  \"meta\": {\n    \"user_id\": \"123\",\n    \"ip\": \"1.2.3.4\",\n    \"reason\": \"wrong_password\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "events"
+              ]
+            },
+            "description": "Send a custom application event. Auth: Bearer app_key (NOT Supabase token). Rate limit: 100/min per key."
+          },
+          "response": []
+        },
+        {
+          "name": "List App Events",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{supabaseAccessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/app-events?limit=50",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "app-events"
+              ],
+              "query": [
+                {
+                  "key": "server_id",
+                  "value": "{{serverId}}",
+                  "disabled": true
+                },
+                {
+                  "key": "source",
+                  "value": "auth-service",
+                  "disabled": true
+                },
+                {
+                  "key": "event",
+                  "value": "login_failed",
+                  "disabled": true
+                },
+                {
+                  "key": "severity",
+                  "value": "warning",
+                  "disabled": true
+                },
+                {
+                  "key": "q",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "since",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "until",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "limit",
+                  "value": "50"
+                },
+                {
+                  "key": "offset",
+                  "value": "0",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "List app events with filters. Supports server_id, source, event, severity, search (q), time range (since/until), pagination (limit/offset)."
+          },
+          "response": []
+        },
+        {
+          "name": "Create Event Alert Rule",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code >= 200 && pm.response.code < 300) {",
+                  "  const data = pm.response.json();",
+                  "  if (data.id) pm.collectionVariables.set('eventAlertRuleId', data.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{supabaseAccessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Too many login failures\",\n  \"event\": \"login_failed\",\n  \"source\": null,\n  \"severity_filter\": null,\n  \"threshold\": 10,\n  \"window_seconds\": 300\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/event-alert-rules",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "event-alert-rules"
+              ]
+            },
+            "description": "Create an alert rule. Triggers when threshold events occur within window_seconds."
+          },
+          "response": []
+        },
+        {
+          "name": "List Event Alert Rules",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{supabaseAccessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/event-alert-rules",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "event-alert-rules"
+              ]
+            },
+            "description": "List all event alert rules for the authenticated user."
+          },
+          "response": []
+        },
+        {
+          "name": "Delete Event Alert Rule",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{supabaseAccessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/event-alert-rules/{{eventAlertRuleId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "event-alert-rules",
+                "{{eventAlertRuleId}}"
+              ]
+            },
+            "description": "Delete an event alert rule."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Event Catalog",
+      "item": [
+        {
+          "name": "Get Event Catalog",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/event-catalog",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "event-catalog"
+              ]
+            },
+            "description": "Public endpoint. Returns all predefined event types grouped by category (authentication, errors, payments, security, performance, etc.) with suggested source, severity, and meta fields for each event type."
           },
           "response": []
         }

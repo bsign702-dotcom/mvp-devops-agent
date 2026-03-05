@@ -45,6 +45,9 @@ from .models import (
     EventAlertRuleCreateRequest,
     EventAlertRuleDeleteResponse,
     EventAlertRuleItem,
+    EventCatalogResponse,
+    EventCategoryItem,
+    EventTypeItem,
     LintResponse,
     LogSearchResponse,
     MetricsHistoryResponse,
@@ -1524,3 +1527,265 @@ def delete_event_alert_rule(
 ) -> EventAlertRuleDeleteResponse:
     svc_delete_event_alert_rule(user_id=current_user.local_user_id, rule_id=rule_id)
     return EventAlertRuleDeleteResponse(id=rule_id)
+
+
+# ---------------------------------------------------------------------------
+# Event Catalog – Predefined event types for quick setup
+# ---------------------------------------------------------------------------
+
+EVENT_CATALOG: list[EventCategoryItem] = [
+    EventCategoryItem(
+        category="authentication",
+        label="Authentication",
+        events=[
+            EventTypeItem(
+                event="login_success",
+                label="Login Success",
+                severity="info",
+                description="User logged in successfully",
+                suggested_source="auth-service",
+                suggested_meta=["user_id", "ip", "method"],
+            ),
+            EventTypeItem(
+                event="login_failed",
+                label="Login Failed",
+                severity="warning",
+                description="Failed login attempt",
+                suggested_source="auth-service",
+                suggested_meta=["user_id", "ip", "reason"],
+            ),
+            EventTypeItem(
+                event="password_reset",
+                label="Password Reset",
+                severity="info",
+                description="Password reset requested",
+                suggested_source="auth-service",
+                suggested_meta=["user_id", "ip", "email"],
+            ),
+            EventTypeItem(
+                event="session_expired",
+                label="Session Expired",
+                severity="info",
+                description="User session expired",
+                suggested_source="auth-service",
+                suggested_meta=["user_id", "session_id"],
+            ),
+        ],
+    ),
+    EventCategoryItem(
+        category="user_activity",
+        label="User Activity",
+        events=[
+            EventTypeItem(
+                event="user_signup",
+                label="User Signup",
+                severity="info",
+                description="New user registered",
+                suggested_source="auth-service",
+                suggested_meta=["user_id", "ip", "email"],
+            ),
+            EventTypeItem(
+                event="user_logout",
+                label="User Logout",
+                severity="info",
+                description="User logged out",
+                suggested_source="auth-service",
+                suggested_meta=["user_id"],
+            ),
+            EventTypeItem(
+                event="page_view",
+                label="Page View",
+                severity="info",
+                description="User visited a page",
+                suggested_source="frontend",
+                suggested_meta=["user_id", "page", "referrer"],
+            ),
+            EventTypeItem(
+                event="page_duration",
+                label="Page Duration",
+                severity="info",
+                description="Time spent on a specific page",
+                suggested_source="frontend",
+                suggested_meta=["user_id", "page", "duration_ms"],
+            ),
+            EventTypeItem(
+                event="settings_updated",
+                label="Settings Updated",
+                severity="info",
+                description="User updated account settings",
+                suggested_source="app",
+                suggested_meta=["user_id", "changed_fields"],
+            ),
+            EventTypeItem(
+                event="role_changed",
+                label="Role Changed",
+                severity="warning",
+                description="User permissions changed",
+                suggested_source="admin-service",
+                suggested_meta=["user_id", "old_role", "new_role", "changed_by"],
+            ),
+        ],
+    ),
+    EventCategoryItem(
+        category="errors",
+        label="Errors",
+        events=[
+            EventTypeItem(
+                event="app_error",
+                label="Application Error",
+                severity="error",
+                description="Application error occurred",
+                suggested_source="app",
+                suggested_meta=["error", "stack_trace", "endpoint"],
+            ),
+            EventTypeItem(
+                event="api_error",
+                label="API Error",
+                severity="error",
+                description="API request error",
+                suggested_source="api",
+                suggested_meta=["endpoint", "status_code", "error"],
+            ),
+            EventTypeItem(
+                event="database_error",
+                label="Database Error",
+                severity="error",
+                description="Database error",
+                suggested_source="database",
+                suggested_meta=["query", "error", "database"],
+            ),
+            EventTypeItem(
+                event="service_timeout",
+                label="Service Timeout",
+                severity="error",
+                description="External service timeout",
+                suggested_source="app",
+                suggested_meta=["service", "timeout_ms", "endpoint"],
+            ),
+        ],
+    ),
+    EventCategoryItem(
+        category="payments",
+        label="Payments",
+        events=[
+            EventTypeItem(
+                event="payment_success",
+                label="Payment Success",
+                severity="info",
+                description="Payment completed successfully",
+                suggested_source="payment-service",
+                suggested_meta=["user_id", "amount", "currency", "provider"],
+            ),
+            EventTypeItem(
+                event="payment_failed",
+                label="Payment Failed",
+                severity="error",
+                description="Payment failed",
+                suggested_source="payment-service",
+                suggested_meta=["user_id", "amount", "currency", "reason"],
+            ),
+        ],
+    ),
+    EventCategoryItem(
+        category="security",
+        label="Security",
+        events=[
+            EventTypeItem(
+                event="multiple_login_failures",
+                label="Multiple Login Failures",
+                severity="error",
+                description="Multiple failed login attempts detected",
+                suggested_source="auth-service",
+                suggested_meta=["user_id", "ip", "attempt_count", "window_seconds"],
+            ),
+            EventTypeItem(
+                event="suspicious_activity",
+                label="Suspicious Activity",
+                severity="error",
+                description="Suspicious user activity detected",
+                suggested_source="security",
+                suggested_meta=["user_id", "ip", "activity", "reason"],
+            ),
+        ],
+    ),
+    EventCategoryItem(
+        category="performance",
+        label="Performance",
+        events=[
+            EventTypeItem(
+                event="slow_request",
+                label="Slow Request",
+                severity="warning",
+                description="Slow request detected",
+                suggested_source="api",
+                suggested_meta=["endpoint", "duration_ms", "method"],
+            ),
+            EventTypeItem(
+                event="high_response_time",
+                label="High Response Time",
+                severity="warning",
+                description="High response time detected",
+                suggested_source="api",
+                suggested_meta=["endpoint", "duration_ms", "threshold_ms"],
+            ),
+        ],
+    ),
+    EventCategoryItem(
+        category="files_actions",
+        label="Files & Actions",
+        events=[
+            EventTypeItem(
+                event="file_uploaded",
+                label="File Uploaded",
+                severity="info",
+                description="File uploaded",
+                suggested_source="app",
+                suggested_meta=["user_id", "filename", "size_bytes", "mime_type"],
+            ),
+            EventTypeItem(
+                event="file_downloaded",
+                label="File Downloaded",
+                severity="info",
+                description="File downloaded",
+                suggested_source="app",
+                suggested_meta=["user_id", "filename"],
+            ),
+            EventTypeItem(
+                event="user_deleted",
+                label="User Deleted",
+                severity="warning",
+                description="User account deleted",
+                suggested_source="admin-service",
+                suggested_meta=["user_id", "deleted_by", "reason"],
+            ),
+            EventTypeItem(
+                event="notification_sent",
+                label="Notification Sent",
+                severity="info",
+                description="Notification sent to a user",
+                suggested_source="notification-service",
+                suggested_meta=["user_id", "channel", "template"],
+            ),
+        ],
+    ),
+    EventCategoryItem(
+        category="custom",
+        label="Custom Events",
+        events=[
+            EventTypeItem(
+                event="custom_event",
+                label="Custom Event",
+                severity="info",
+                description="Send any custom event from your application (e.g. order_created, task_completed, report_generated)",
+                suggested_source="app",
+                suggested_meta=["custom_key", "custom_value"],
+            ),
+        ],
+    ),
+]
+
+
+@app.get("/v1/event-catalog", response_model=EventCatalogResponse)
+def get_event_catalog() -> EventCatalogResponse:
+    """Public endpoint returning predefined event types users can send."""
+    return EventCatalogResponse(categories=EVENT_CATALOG)
