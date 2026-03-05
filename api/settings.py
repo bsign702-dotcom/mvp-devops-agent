@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     api_base_url: str = Field(..., alias="API_BASE_URL")
     ip_rate_limit_per_minute: int = 60
     agent_rate_limit_per_minute: int = 120
+    app_key_rate_limit_per_minute: int = 100
     offline_check_interval_seconds: int = 60
     json_log_level: str = "INFO"
     smtp_host: str | None = Field(default=None, alias="SMTP_HOST")

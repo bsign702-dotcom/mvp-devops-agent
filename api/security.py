@@ -10,6 +10,10 @@ def generate_agent_token() -> str:
     return "svr_live_" + secrets.token_urlsafe(32)
 
 
+def generate_app_key() -> str:
+    return "app_key_" + secrets.token_urlsafe(32)
+
+
 def hash_agent_token(raw_token: str, pepper: str) -> str:
     return hmac.new(pepper.encode("utf-8"), raw_token.encode("utf-8"), hashlib.sha256).hexdigest()
 

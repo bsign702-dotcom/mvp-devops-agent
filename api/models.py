@@ -526,3 +526,108 @@ class AgentSelfCheckResponse(BaseModel):
     ok: bool = True
     server_id: UUID
     capabilities: dict[str, Any] = Field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
+# App Events
+# ---------------------------------------------------------------------------
+
+
+class AppKeyCreateRequest(BaseModel):
+    name: str = Field(..., min_length=2, max_length=120)
+
+    @field_validator("name")
+    @classmethod
+    def _strip_name(cls, value: str) -> str:
+        stripped = value.strip()
+        if len(stripped) < 2:
+            raise ValueError("name must be at least 2 characters")
+        return stripped
+
+
+class AppKeyCreateResponse(BaseModel):
+    id: UUID
+    server_id: UUID
+    name: str
+    raw_key: str
+    created_at: datetime
+
+
+class AppKeyItem(BaseModel):
+    id: UUID
+    server_id: UUID
+    name: str
+    created_at: datetime
+    revoked_at: datetime | None = None
+
+
+class AppKeyRevokeResponse(BaseModel):
+    ok: bool = True
+    id: UUID
+    revoked_at: datetime
+
+
+class AppEventIngestRequest(BaseModel):
+    source: str = Field(..., min_length=1, max_length=200)
+    event: str = Field(..., min_length=1, max_length=200)
+    severity: Literal["info", "warning", "error"] = "info"
+    meta: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("meta")
+    @classmethod
+    def _limit_meta_size(cls, value: dict[str, Any]) -> dict[str, Any]:
+        import json as _json
+
+        raw = _json.dumps(value, separators=(",", ":"), default=str)
+        if len(raw) > 16_384:
+            raise ValueError("meta JSON must be under 16 KB")
+        return value
+
+
+class AppEventIngestResponse(BaseModel):
+    ok: bool = True
+    event_id: int
+
+
+class AppEventItem(BaseModel):
+    id: int
+    server_id: UUID
+    source: str
+    event: str
+    severity: str
+    meta: dict[str, Any] = Field(default_factory=dict)
+    ip: str | None = None
+    created_at: datetime
+
+
+class AppEventsListResponse(BaseModel):
+    items: list[AppEventItem] = Field(default_factory=list)
+    total: int = 0
+
+
+class EventAlertRuleCreateRequest(BaseModel):
+    server_id: UUID | None = None
+    name: str = Field(..., min_length=2, max_length=200)
+    event: str = Field(..., min_length=1, max_length=200)
+    source: str | None = None
+    severity_filter: Literal["info", "warning", "error"] | None = None
+    threshold: int = Field(10, ge=1, le=10000)
+    window_seconds: int = Field(300, ge=60, le=86400)
+
+
+class EventAlertRuleItem(BaseModel):
+    id: UUID
+    server_id: UUID | None = None
+    name: str
+    event: str
+    source: str | None = None
+    severity_filter: str | None = None
+    threshold: int
+    window_seconds: int
+    is_enabled: bool
+    created_at: datetime
+
+
+class EventAlertRuleDeleteResponse(BaseModel):
+    ok: bool = True
+    id: UUID

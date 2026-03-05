@@ -28,12 +28,23 @@ from .models import (
     AgentSelfCheckRequest,
     AgentSelfCheckResponse,
     AlertItem,
+    AppEventIngestRequest,
+    AppEventIngestResponse,
+    AppEventItem,
+    AppEventsListResponse,
+    AppKeyCreateRequest,
+    AppKeyCreateResponse,
+    AppKeyItem,
+    AppKeyRevokeResponse,
     ChatAskResponse,
     ChatMessageCreateRequest,
     ChatMessageItem,
     ChatSessionCreateRequest,
     ChatSessionItem,
     ComposeLintRequest,
+    EventAlertRuleCreateRequest,
+    EventAlertRuleDeleteResponse,
+    EventAlertRuleItem,
     LintResponse,
     LogSearchResponse,
     MetricsHistoryResponse,
@@ -99,6 +110,17 @@ from .services.platform_service import (
     search_server_logs,
     submit_preflight_results,
     upsert_agent_self_check,
+)
+from .services.app_events_service import (
+    create_app_key_full as svc_create_app_key,
+    create_event_alert_rule as svc_create_event_alert_rule,
+    delete_event_alert_rule as svc_delete_event_alert_rule,
+    ingest_event as svc_ingest_event,
+    list_app_keys as svc_list_app_keys,
+    list_event_alert_rules as svc_list_event_alert_rules,
+    list_events as svc_list_events,
+    revoke_app_key as svc_revoke_app_key,
+    validate_app_key as svc_validate_app_key,
 )
 from .services.notification_service import (
     list_notification_settings as svc_list_notification_settings,
@@ -1359,3 +1381,146 @@ def list_alerts(
     with get_engine().connect() as conn:
         rows = conn.execute(text(query), params).mappings().all()
     return [_row_to_alert_item(row) for row in rows]
+
+
+# ---------------------------------------------------------------------------
+# App Keys (per-server)
+# ---------------------------------------------------------------------------
+
+
+@app.post("/v1/servers/{server_id}/app-keys", response_model=AppKeyCreateResponse)
+def create_app_key(
+    server_id: UUID,
+    payload: AppKeyCreateRequest,
+    current_user: AuthenticatedUser = Depends(require_authenticated_user),
+) -> AppKeyCreateResponse:
+    row = svc_create_app_key(
+        user_id=current_user.local_user_id,
+        server_id=server_id,
+        name=payload.name,
+    )
+    return AppKeyCreateResponse(
+        id=row["id"],
+        server_id=row["server_id"],
+        name=row["name"],
+        raw_key=row["raw_key"],
+        created_at=row["created_at"],
+    )
+
+
+@app.get("/v1/servers/{server_id}/app-keys", response_model=list[AppKeyItem])
+def list_app_keys(
+    server_id: UUID,
+    current_user: AuthenticatedUser = Depends(require_authenticated_user),
+) -> list[AppKeyItem]:
+    rows = svc_list_app_keys(user_id=current_user.local_user_id, server_id=server_id)
+    return [AppKeyItem(**dict(row)) for row in rows]
+
+
+@app.delete("/v1/app-keys/{key_id}", response_model=AppKeyRevokeResponse)
+def revoke_app_key(
+    key_id: UUID,
+    current_user: AuthenticatedUser = Depends(require_authenticated_user),
+) -> AppKeyRevokeResponse:
+    row = svc_revoke_app_key(user_id=current_user.local_user_id, key_id=key_id)
+    return AppKeyRevokeResponse(id=row["id"], revoked_at=row["revoked_at"])
+
+
+# ---------------------------------------------------------------------------
+# App Events – Public ingest endpoint (app key auth)
+# ---------------------------------------------------------------------------
+
+
+@app.post("/v1/events", response_model=AppEventIngestResponse)
+def ingest_app_event(payload: AppEventIngestRequest, request: Request) -> AppEventIngestResponse:
+    raw_token = _extract_bearer_token(request)
+    key_hash = hash_agent_token(raw_token, settings.agent_token_pepper)
+
+    # Rate limit: 100 events/min per app key
+    rate_limiter.check(f"appkey:{key_hash}", settings.app_key_rate_limit_per_minute)
+
+    key_info = svc_validate_app_key(key_hash)
+
+    forwarded_for = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+    client_ip = forwarded_for or (request.client.host if request.client else None)
+
+    row = svc_ingest_event(
+        server_id=key_info["server_id"],
+        user_id=key_info["user_id"],
+        source=payload.source,
+        event=payload.event,
+        severity=payload.severity,
+        meta=payload.meta,
+        ip=client_ip,
+    )
+    return AppEventIngestResponse(event_id=row["id"])
+
+
+# ---------------------------------------------------------------------------
+# App Events – Dashboard (user auth)
+# ---------------------------------------------------------------------------
+
+
+@app.get("/v1/app-events", response_model=AppEventsListResponse)
+def list_app_events(
+    server_id: UUID | None = Query(default=None),
+    source: str | None = Query(default=None),
+    event: str | None = Query(default=None),
+    severity: str | None = Query(default=None),
+    q: str | None = Query(default=None),
+    since: datetime | None = Query(default=None),
+    until: datetime | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+    current_user: AuthenticatedUser = Depends(require_authenticated_user),
+) -> AppEventsListResponse:
+    result = svc_list_events(
+        user_id=current_user.local_user_id,
+        server_id=server_id,
+        source=source,
+        event=event,
+        severity=severity,
+        q=q,
+        since=since,
+        until=until,
+        limit=limit,
+        offset=offset,
+    )
+    return AppEventsListResponse(
+        items=[AppEventItem(**e) for e in result["items"]],
+        total=result["total"],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Event Alert Rules
+# ---------------------------------------------------------------------------
+
+
+@app.post("/v1/event-alert-rules", response_model=EventAlertRuleItem)
+def create_event_alert_rule(
+    payload: EventAlertRuleCreateRequest,
+    current_user: AuthenticatedUser = Depends(require_authenticated_user),
+) -> EventAlertRuleItem:
+    row = svc_create_event_alert_rule(
+        user_id=current_user.local_user_id,
+        **payload.model_dump(),
+    )
+    return EventAlertRuleItem(**row)
+
+
+@app.get("/v1/event-alert-rules", response_model=list[EventAlertRuleItem])
+def list_event_alert_rules(
+    current_user: AuthenticatedUser = Depends(require_authenticated_user),
+) -> list[EventAlertRuleItem]:
+    rows = svc_list_event_alert_rules(user_id=current_user.local_user_id)
+    return [EventAlertRuleItem(**dict(row)) for row in rows]
+
+
+@app.delete("/v1/event-alert-rules/{rule_id}", response_model=EventAlertRuleDeleteResponse)
+def delete_event_alert_rule(
+    rule_id: UUID,
+    current_user: AuthenticatedUser = Depends(require_authenticated_user),
+) -> EventAlertRuleDeleteResponse:
+    svc_delete_event_alert_rule(user_id=current_user.local_user_id, rule_id=rule_id)
+    return EventAlertRuleDeleteResponse(id=rule_id)
