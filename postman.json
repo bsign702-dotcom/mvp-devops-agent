@@ -1816,6 +1816,39 @@
             "description": "Public endpoint. Returns all predefined event types grouped by category (authentication, errors, payments, security, performance, etc.) with suggested source, severity, and meta fields for each event type."
           },
           "response": []
+        },
+        {
+          "name": "AI Generate Event",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{supabaseAccessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"description\": \"user failed to login with wrong password\",\n  \"platforms\": [\"python\", \"node\", \"curl\"]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/events/generate",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "events",
+                "generate"
+              ]
+            },
+            "description": "Describe an event in plain language (English or Arabic) and get back a structured event definition with event_name, parameters, production-ready code for selected platforms, and related event suggestions. Rate limited to 20 requests/minute."
+          },
+          "response": []
         }
       ]
     }

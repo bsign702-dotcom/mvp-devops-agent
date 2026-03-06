@@ -47,6 +47,8 @@ from .models import (
     EventAlertRuleItem,
     EventCatalogResponse,
     EventCategoryItem,
+    EventGenerateRequest,
+    EventGenerateResponse,
     EventTypeItem,
     LintResponse,
     LogSearchResponse,
@@ -89,6 +91,7 @@ from .scheduler import start_scheduler, stop_scheduler
 from .security import generate_agent_token, hash_agent_token
 from .services.auth_service import AuthenticatedUser, require_authenticated_user
 from .services.admin_notify_service import notify_server_created
+from .services.llm_provider import generate_event_definition
 from .services.chat_service import (
     ask_chat_assistant as svc_ask_chat_assistant,
     create_chat_session as svc_create_chat_session,
@@ -1789,3 +1792,23 @@ EVENT_CATALOG: list[EventCategoryItem] = [
 def get_event_catalog() -> EventCatalogResponse:
     """Public endpoint returning predefined event types users can send."""
     return EventCatalogResponse(categories=EVENT_CATALOG)
+
+
+# ---------------------------------------------------------------------------
+# AI Event Generator
+# ---------------------------------------------------------------------------
+
+
+@app.post("/v1/events/generate", response_model=EventGenerateResponse)
+def generate_event(
+    payload: EventGenerateRequest,
+    current_user: AuthenticatedUser = Depends(require_authenticated_user),
+) -> EventGenerateResponse:
+    """Describe an event in plain language, get back structured definition + code."""
+    rate_limiter.check(f"eventgen:{current_user.local_user_id}", 20)
+
+    result = generate_event_definition(
+        description=payload.description,
+        platforms=payload.platforms,
+    )
+    return EventGenerateResponse(**result)

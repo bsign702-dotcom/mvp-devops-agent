@@ -655,3 +655,43 @@ class EventCategoryItem(BaseModel):
 
 class EventCatalogResponse(BaseModel):
     categories: list[EventCategoryItem]
+
+
+# ---------------------------------------------------------------------------
+# AI Event Generator
+# ---------------------------------------------------------------------------
+
+
+class EventGenerateRequest(BaseModel):
+    description: str = Field(..., min_length=2, max_length=1000)
+    platforms: list[str] = Field(
+        default_factory=lambda: ["python"],
+        description="Target platforms for code generation",
+    )
+
+    @field_validator("platforms")
+    @classmethod
+    def _validate_platforms(cls, value: list[str]) -> list[str]:
+        allowed = {"python", "node", "php", "ruby", "go", "curl", "swift", "kotlin", "flutter", "react_native", "web_js"}
+        cleaned = [p.strip().lower() for p in value if p.strip().lower() in allowed]
+        return cleaned or ["python"]
+
+
+class EventParameterItem(BaseModel):
+    name: str
+    type: str
+    description: str
+    example: str
+    required: bool = True
+
+
+class EventGenerateResponse(BaseModel):
+    event_name: str
+    display_name: str
+    category: str
+    description: str
+    severity: Literal["info", "warning", "error"]
+    suggested_source: str
+    parameters: list[EventParameterItem] = Field(default_factory=list)
+    code: dict[str, str] = Field(default_factory=dict)
+    suggestions: list[str] = Field(default_factory=list)

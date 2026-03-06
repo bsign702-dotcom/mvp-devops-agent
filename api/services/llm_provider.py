@@ -362,3 +362,159 @@ def generate_assistant_reply(
         extra={"event": "llm_response_generated", "provider": provider, "model": model},
     )
     return content, model
+
+
+# ---------------------------------------------------------------------------
+# AI Event Generator
+# ---------------------------------------------------------------------------
+
+_EVENT_GENERATOR_SYSTEM_PROMPT = """You are ServerNotify AI — an expert analytics event engineer.
+
+The developer describes an app event in plain language (any language including Arabic), and you generate everything they need.
+
+RULES:
+1. EVENT NAMING: Always use snake_case. Prefix with category when helpful (e.g. auth_login). Keep names short and clear.
+2. PARAMETERS: Suggest 3-7 practical parameters. Always include user_id if applicable. Use types: String, Int, Double, Boolean, Date. Mark required vs optional. Add realistic example values.
+3. CODE: Generate production-ready code using the ServerNotify HTTP API pattern:
+   POST https://omcard.net/v1/events
+   Headers: Authorization: Bearer APP_KEY, Content-Type: application/json
+   Body: {"source": "...", "event": "...", "severity": "info|warning|error", "meta": {...}}
+   Always wrap in try/catch with comment "Never break your app because of monitoring"
+4. SUGGESTIONS: Suggest 2-3 related events the developer should also track.
+5. Always output in English regardless of input language.
+6. Events should follow industry standards (GA4, Mixpanel, Amplitude patterns).
+7. severity must be exactly one of: "info", "warning", "error"
+
+Respond ONLY in valid JSON with this exact structure — no markdown, no backticks, no preamble:
+{
+  "event_name": "snake_case_name",
+  "display_name": "Human Readable Name",
+  "category": "Category",
+  "description": "Brief description",
+  "severity": "info",
+  "suggested_source": "service-name",
+  "parameters": [
+    {"name": "param_name", "type": "String", "description": "What this tracks", "example": "example_value", "required": true}
+  ],
+  "code": {
+    "platform_key": "// Full tracking code for that platform"
+  },
+  "suggestions": ["related_event_1", "related_event_2"]
+}
+
+Generate code ONLY for the platforms listed in the user request. Platform keys: python, node, php, ruby, go, curl, swift, kotlin, flutter, react_native, web_js"""
+
+
+def generate_event_definition(
+    *,
+    description: str,
+    platforms: list[str],
+) -> dict[str, Any]:
+    """Use LLM to generate a structured event definition from a plain-language description."""
+    settings = get_settings()
+    provider = settings.llm_provider.strip().lower()
+    model = settings.llm_model.strip()
+
+    if not model:
+        raise APIError(code="server_error", message="LLM_MODEL is empty", status_code=500)
+
+    if provider == "mock":
+        return {
+            "event_name": "mock_event",
+            "display_name": "Mock Event",
+            "category": "Custom",
+            "description": description,
+            "severity": "info",
+            "suggested_source": "app",
+            "parameters": [
+                {"name": "user_id", "type": "String", "description": "User identifier", "example": "usr_123", "required": True},
+            ],
+            "code": {p: f"// Mock code for {p}" for p in platforms},
+            "suggestions": ["related_event"],
+        }
+
+    if provider != "openai":
+        raise APIError(
+            code="bad_request", message="Unsupported LLM provider", status_code=400,
+            details={"provider": provider, "supported": ["openai", "mock"]},
+        )
+
+    if not settings.openai_api_key:
+        raise APIError(
+            code="bad_request", message="OpenAI API key is not configured", status_code=400,
+        )
+
+    user_msg = f"Description: {description}\nPlatforms: {', '.join(platforms)}"
+
+    url = settings.openai_base_url.rstrip("/") + "/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {settings.openai_api_key}",
+        "Content-Type": "application/json",
+    }
+    body = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": _EVENT_GENERATOR_SYSTEM_PROMPT},
+            {"role": "user", "content": user_msg},
+        ],
+        "temperature": 0.3,
+    }
+
+    try:
+        with httpx.Client(timeout=httpx.Timeout(settings.llm_timeout_sec)) as client:
+            resp = client.post(url, headers=headers, json=body)
+    except httpx.HTTPError as exc:
+        raise APIError(
+            code="server_error", message="Failed to reach LLM provider", status_code=500,
+            details={"error": str(exc)},
+        ) from exc
+
+    if resp.status_code >= 400:
+        raise APIError(
+            code="server_error", message="LLM provider returned an error", status_code=500,
+            details={"status_code": resp.status_code},
+        )
+
+    try:
+        payload = resp.json()
+        content = payload["choices"][0]["message"]["content"]
+    except Exception as exc:
+        raise APIError(
+            code="server_error", message="Invalid LLM response payload", status_code=500,
+        ) from exc
+
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, dict):
+                text_part = item.get("text")
+                if isinstance(text_part, str):
+                    parts.append(text_part)
+        content = "\n".join(parts)
+    if not isinstance(content, str):
+        content = str(content)
+    content = content.strip()
+
+    # Strip markdown fences if the LLM wrapped the JSON
+    if content.startswith("```"):
+        lines = content.splitlines()
+        lines = [l for l in lines if not l.strip().startswith("```")]
+        content = "\n".join(lines).strip()
+
+    try:
+        result = json.loads(content)
+    except json.JSONDecodeError:
+        raise APIError(
+            code="server_error", message="LLM returned invalid JSON", status_code=500,
+            details={"raw": _trim_text(content, 500)},
+        )
+
+    # Ensure severity is valid
+    if result.get("severity") not in ("info", "warning", "error"):
+        result["severity"] = "info"
+
+    logger.info(
+        "event_definition_generated",
+        extra={"event": "event_definition_generated", "provider": provider, "model": model, "event_name": result.get("event_name")},
+    )
+    return result
