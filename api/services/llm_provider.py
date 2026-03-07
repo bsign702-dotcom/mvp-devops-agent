@@ -513,6 +513,13 @@ def generate_event_definition(
     if result.get("severity") not in ("info", "warning", "error"):
         result["severity"] = "info"
 
+    # Coerce parameter fields to strings (LLM may return numbers)
+    for param in result.get("parameters") or []:
+        if isinstance(param, dict):
+            for key in ("name", "type", "description", "example"):
+                if key in param and not isinstance(param[key], str):
+                    param[key] = str(param[key])
+
     logger.info(
         "event_definition_generated",
         extra={"event": "event_definition_generated", "provider": provider, "model": model, "event_name": result.get("event_name")},
