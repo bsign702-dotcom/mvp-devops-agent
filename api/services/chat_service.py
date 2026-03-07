@@ -241,13 +241,26 @@ def _build_system_prompt() -> str:
         "Primary objective:\n"
         "- Diagnose the user's issue using the provided server context (metrics, alerts, logs, docker, host metadata, uptime, app events).\n"
         "- Give the shortest high-confidence path to mitigation without unsafe actions.\n\n"
+        "Data sources in context JSON:\n"
+        "- `server`: server identity, status, host info, docker containers, agent capabilities\n"
+        "- `metrics`: CPU, RAM, disk, load average, network usage\n"
+        "- `alerts`: unresolved and recent alerts with type, severity, details\n"
+        "- `logs`: system logs from systemd, nginx, docker (with source, level, message)\n"
+        "- `app_events`: application-level events sent by the user's app via ServerNotify SDK. "
+        "Each event has: ts (timestamp), source (e.g. auth-service, payment-service), "
+        "event (e.g. login_failed, payment_success, api_error), severity (info/warning/error), "
+        "meta (dict with details like user_id, ip, reason, amount), and ip. "
+        "Use app_events to answer questions about application behavior, login patterns, "
+        "payment failures, error rates, security issues, and user activity. "
+        "When the user asks about app events, summarize counts, patterns, and notable entries.\n"
+        "- `uptime_monitors`: HTTP endpoint monitoring data\n\n"
         "Hard rules:\n"
         "- Never claim you executed commands or changed server state.\n"
         "- Do not provide generic boilerplate answers. Tailor output to the actual evidence in context.\n"
         "- If evidence is insufficient or conflicting, explicitly say what is missing.\n"
         "- Prefer reversible, low-risk steps first and include verification after each major step.\n"
         "- If a component has no evidence (for example no docker symptoms), do not force docker fixes.\n"
-        "- Use concrete values/timestamps from context when available (CPU, RAM, disk, alert type, log lines, status).\n"
+        "- Use concrete values/timestamps from context when available (CPU, RAM, disk, alert type, log lines, status, app event details).\n"
         "- Do not suggest destructive commands by default (no `rm -rf`, data deletion, dropping databases, or force resets).\n"
         "- Do not ask user to disable firewall or run untrusted `curl | bash` commands.\n"
         "- For config-changing suggestions, always include rollback notes.\n"
@@ -255,8 +268,9 @@ def _build_system_prompt() -> str:
         "Reasoning style:\n"
         "- Build a hypothesis tree, rank top causes by likelihood, then propose checks that disambiguate causes.\n"
         "- Keep command count focused; avoid large shotgun command lists.\n"
-        "- Include expected command outcomes so user knows what confirms or rejects a hypothesis.\n\n"
-        "Response format:\n"
+        "- Include expected command outcomes so user knows what confirms or rejects a hypothesis.\n"
+        "- When answering about app events, group by event type, count occurrences, highlight patterns (e.g. spike in login_failed from same IP).\n\n"
+        "Response format (use when troubleshooting — for simple questions about data, just answer directly):\n"
         "1) What I see (evidence)\n"
         "2) Most likely root cause\n"
         "3) Checks to run now (ordered)\n"
@@ -264,6 +278,112 @@ def _build_system_prompt() -> str:
         "5) Verification\n"
         "6) Risks and rollback\n"
     )
+
+
+_SEVERITY_COLORS = {"info": "#3b82f6", "warning": "#f59e0b", "error": "#ef4444"}
+_EVENT_COLORS = [
+    "#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6",
+    "#ec4899", "#06b6d4", "#f97316", "#14b8a6", "#6366f1",
+]
+
+_EVENT_KEYWORDS = [
+    "event", "events", "login", "payment", "error", "signup",
+    "activity", "security", "app_event", "app event",
+    "احداث", "اخطاء", "تسجيل", "دفع", "نشاط",
+]
+
+
+def _should_show_event_charts(user_message: str) -> bool:
+    """Detect if user is asking about app events."""
+    msg = user_message.lower()
+    return any(kw in msg for kw in _EVENT_KEYWORDS)
+
+
+def _build_charts_from_context(context: dict[str, Any], user_message: str) -> list[dict[str, Any]]:
+    """Build charts from context data based on what the user asked about."""
+    charts: list[dict[str, Any]] = []
+    app_events = context.get("app_events") or []
+
+    if _should_show_event_charts(user_message) and app_events:
+        # Chart 1: Events by type (bar)
+        event_counts: dict[str, int] = {}
+        for ev in app_events:
+            name = ev.get("event") or "unknown"
+            event_counts[name] = event_counts.get(name, 0) + 1
+        if event_counts:
+            sorted_events = sorted(event_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+            charts.append({
+                "chart_type": "bar",
+                "title": "Events by Type",
+                "x_label": "Event",
+                "y_label": "Count",
+                "data": [
+                    {"label": name, "value": float(count), "color": _EVENT_COLORS[i % len(_EVENT_COLORS)]}
+                    for i, (name, count) in enumerate(sorted_events)
+                ],
+            })
+
+        # Chart 2: Events by severity (doughnut)
+        sev_counts: dict[str, int] = {}
+        for ev in app_events:
+            sev = ev.get("severity") or "info"
+            sev_counts[sev] = sev_counts.get(sev, 0) + 1
+        if sev_counts:
+            charts.append({
+                "chart_type": "doughnut",
+                "title": "Events by Severity",
+                "data": [
+                    {"label": sev, "value": float(count), "color": _SEVERITY_COLORS.get(sev, "#6b7280")}
+                    for sev, count in sorted(sev_counts.items())
+                ],
+            })
+
+        # Chart 3: Events by source (pie)
+        source_counts: dict[str, int] = {}
+        for ev in app_events:
+            src = ev.get("source") or "unknown"
+            source_counts[src] = source_counts.get(src, 0) + 1
+        if len(source_counts) > 1:
+            sorted_sources = sorted(source_counts.items(), key=lambda x: x[1], reverse=True)[:8]
+            charts.append({
+                "chart_type": "pie",
+                "title": "Events by Source",
+                "data": [
+                    {"label": src, "value": float(count), "color": _EVENT_COLORS[i % len(_EVENT_COLORS)]}
+                    for i, (src, count) in enumerate(sorted_sources)
+                ],
+            })
+
+    # Metrics charts (when asking about CPU, RAM, disk, etc.)
+    metrics = context.get("metrics") or []
+    msg_lower = user_message.lower()
+    metric_keywords = ["cpu", "ram", "memory", "disk", "load", "metric", "performance", "مؤشر", "ذاكرة", "معالج"]
+    if any(kw in msg_lower for kw in metric_keywords) and metrics:
+        m = metrics[0] if metrics else {}
+        cpu = m.get("cpu_percent") or m.get("cpu_avg")
+        ram = m.get("ram_percent") or m.get("ram_avg")
+        disk = m.get("disk_percent") or m.get("disk_avg")
+        if cpu is not None or ram is not None or disk is not None:
+            data = []
+            if cpu is not None:
+                color = "#ef4444" if float(cpu) > 80 else "#f59e0b" if float(cpu) > 60 else "#10b981"
+                data.append({"label": "CPU", "value": float(cpu), "color": color})
+            if ram is not None:
+                color = "#ef4444" if float(ram) > 80 else "#f59e0b" if float(ram) > 60 else "#10b981"
+                data.append({"label": "RAM", "value": float(ram), "color": color})
+            if disk is not None:
+                color = "#ef4444" if float(disk) > 85 else "#f59e0b" if float(disk) > 70 else "#10b981"
+                data.append({"label": "Disk", "value": float(disk), "color": color})
+            if data:
+                charts.append({
+                    "chart_type": "bar",
+                    "title": "Current Resource Usage (%)",
+                    "x_label": "Resource",
+                    "y_label": "Usage %",
+                    "data": data,
+                })
+
+    return charts
 
 
 def ask_chat_assistant(
@@ -342,10 +462,13 @@ def ask_chat_assistant(
             {"session_id": str(session_id), "user_id": str(user_id)},
         )
 
+    charts = _build_charts_from_context(context, user_message)
+
     return {
         "session_id": session_id,
         "mode": "suggest_only",
         "model": model_used,
         "user_message": dict(user_row),
         "assistant_message": dict(assistant_row),
+        "charts": charts,
     }

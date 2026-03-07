@@ -307,12 +307,27 @@ class ChatMessageItem(BaseModel):
     created_at: datetime
 
 
+class ChartDataPoint(BaseModel):
+    label: str
+    value: float
+    color: str | None = None
+
+
+class ChartItem(BaseModel):
+    chart_type: Literal["bar", "line", "pie", "doughnut"]
+    title: str
+    x_label: str | None = None
+    y_label: str | None = None
+    data: list[ChartDataPoint] = Field(default_factory=list)
+
+
 class ChatAskResponse(BaseModel):
     session_id: UUID
     mode: Literal["suggest_only"]
     model: str
     user_message: ChatMessageItem
     assistant_message: ChatMessageItem
+    charts: list[ChartItem] = Field(default_factory=list)
 
 
 class HealthResponse(BaseModel):
