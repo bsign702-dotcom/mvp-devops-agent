@@ -131,6 +131,40 @@ def _get_recent_conversation(*, session_id: UUID, limit: int = 20) -> list[dict[
     return messages
 
 
+def _fetch_recent_app_events(*, user_id: UUID, server_id: UUID, limit: int = 50) -> list[dict[str, Any]]:
+    """Fetch recent app events for a server to include in chat context."""
+    with get_engine().connect() as conn:
+        rows = conn.execute(
+            text(
+                """
+                SELECT source, event, severity, meta, ip, created_at
+                FROM app_events
+                WHERE user_id = :user_id AND server_id = :server_id
+                ORDER BY created_at DESC
+                LIMIT :limit
+                """
+            ),
+            {"user_id": str(user_id), "server_id": str(server_id), "limit": limit},
+        ).mappings().all()
+    result = []
+    for row in rows:
+        meta = row.get("meta")
+        if isinstance(meta, str):
+            try:
+                meta = json.loads(meta)
+            except json.JSONDecodeError:
+                pass
+        result.append({
+            "ts": str(row.get("created_at") or ""),
+            "source": row.get("source"),
+            "event": row.get("event"),
+            "severity": row.get("severity"),
+            "meta": meta if isinstance(meta, dict) else {},
+            "ip": row.get("ip"),
+        })
+    return result
+
+
 def _build_server_context(*, user_id: UUID, server_id: UUID) -> dict[str, Any]:
     settings = get_settings()
     packet = build_chat_context_packet(user_id=user_id, server_id=server_id)
@@ -169,6 +203,8 @@ def _build_server_context(*, user_id: UUID, server_id: UUID) -> dict[str, Any]:
         else {}
     )
 
+    app_events = _fetch_recent_app_events(user_id=user_id, server_id=server_id, limit=50)
+
     return {
         "server": {
             "id": str(server.get("id") or server_id),
@@ -190,6 +226,7 @@ def _build_server_context(*, user_id: UUID, server_id: UUID) -> dict[str, Any]:
             "recent": recent_alerts[:30],
         },
         "logs": flat_logs[:log_limit],
+        "app_events": app_events,
         "uptime_monitors": [],
         "troubleshooting_packet": packet,
     }
@@ -202,7 +239,7 @@ def _build_system_prompt() -> str:
         "You are DevOps Assistant for production troubleshooting.\n"
         f"{mode_line}\n"
         "Primary objective:\n"
-        "- Diagnose the user's issue using the provided server context (metrics, alerts, logs, docker, host metadata, uptime).\n"
+        "- Diagnose the user's issue using the provided server context (metrics, alerts, logs, docker, host metadata, uptime, app events).\n"
         "- Give the shortest high-confidence path to mitigation without unsafe actions.\n\n"
         "Hard rules:\n"
         "- Never claim you executed commands or changed server state.\n"
@@ -275,6 +312,7 @@ def ask_chat_assistant(
         "server_status": context["server"]["status"],
         "unresolved_alerts": context["alerts"]["unresolved_count"],
         "recent_logs": len(context["logs"]),
+        "app_events": len(context.get("app_events") or []),
     }
     with get_engine().begin() as conn:
         assistant_row = conn.execute(
